@@ -1,0 +1,203 @@
+import { supabaseAdmin } from '../config/supabase.js'
+import { ApiError, assertNoDatabaseError } from '../utils/errors.js'
+import { parse, requestDecisionSchema } from '../utils/validation.js'
+import { recordAudit, recordSecurity } from '../middleware/telemetry.js'
+import { getOne, getRows, updateOne } from '../services/dataService.js'
+import { z } from 'zod'
+
+// Shorthand: integer user id from the application users table
+const uid = (req) => req.auth.profile.id
+
+const list = (table, filter) => async (req, res, next) => {
+  try { res.json(await getRows(table, filter?.(req))) } catch (e) { next(e) }
+}
+
+export const employeeDashboard      = list('users', () => (q) => q.eq('role', 'CUSTOMER').select('id'))
+export const employeeCustomers      = list('customer_profiles', () => (q) => q.select('*, users!inner(id, name, email, status)').order('created_at', { ascending: false }))
+export const employeeCustomer       = (req, res, next) => {
+  return getOne('customer_profiles', (q) => q.select('*, users!inner(id, name, email, status, phone)').eq('id', req.params.id))
+    .then(data => res.json(data)).catch(next)
+}
+export const employeeTransactions   = list('transactions', () => (q) => q.select('*, sender:accounts!sender_account_id(account_number, users(name)), receiver:accounts!receiver_account_id(account_number, users(name))').order('created_at', { ascending: false }))
+export const employeeRequests       = list('requests', () => (q) => q.select('*, users!requests_user_id_fkey(id, name, email)').order('created_at', { ascending: false }))
+export const managerCustomers       = employeeCustomers
+export const managerCustomer        = employeeCustomer
+export const managerEmployees       = list('employee_profiles', () => (q) => q.order('created_at', { ascending: false }))
+export const managerTransactions    = employeeTransactions
+export const managerRequests        = employeeRequests
+export const securityEvents         = list('security_events', () => (q) => q.order('created_at', { ascending: false }))
+
+export const employeeProfile = (req, res) => res.json(req.auth.profile)
+export const managerProfile  = (req, res) => res.json(req.auth.profile)
+
+export async function updateOwnProfile(req, res, next) {
+  try {
+    const table = req.auth.profile.role === 'EMPLOYEE' ? 'employee_profiles' : 'manager_profiles'
+    // Filter by user_id (integer FK) – use profile.id, not auth UUID
+    const { data, error } = await supabaseAdmin.from(table).update(req.body).eq('user_id', uid(req)).select().single()
+    if (error?.code === 'PGRST116') throw new ApiError(404, 'Profile not found')
+    assertNoDatabaseError(error, 'Unable to update profile')
+    await recordAudit(req, 'UPDATE_PROFILE', table, data.id)
+    res.json(data)
+  } catch (error) { next(error) }
+}
+
+export const suspiciousTransactions = list('transactions', () => (q) => q.eq('is_suspicious', true).order('created_at', { ascending: false }))
+
+export const reports = async (req, res, next) => {
+  try {
+    const [transactions, accounts, customers] = await Promise.all([
+      getRows('transactions'),
+      getRows('accounts'),
+      getRows('customer_profiles'),
+    ])
+    res.json({
+      generated_at: new Date().toISOString(),
+      totals: {
+        transactions: transactions.length,
+        deposits: accounts.reduce((sum, item) => sum + Number(item.balance ?? 0), 0),
+        customers: customers.length,
+      },
+    })
+  } catch (e) { next(e) }
+}
+
+export async function decideRequest(req, res, next) {
+  try {
+    const input = parse(requestDecisionSchema, req.body)
+    // processed_by is the integer users.id of the employee/manager
+    const row = await updateOne('requests', req.params.id, {
+      status: input.status,
+      processed_by: uid(req),
+      processed_at: new Date().toISOString(),
+    })
+    await recordAudit(req, `${input.status}_REQUEST`, 'requests', row.id)
+    await recordSecurity(req, 'PRIVILEGED_ACTION', 'LOW', `Request ${row.id} ${input.status} by ${req.auth.profile.role}`)
+    res.json(row)
+  } catch (e) { next(e) }
+}
+
+export async function customerStatus(req, res, next) {
+  try {
+    const status = req.body.status
+    if (!['ACTIVE', 'INACTIVE', 'LOCKED'].includes(status)) throw new ApiError(400, 'Status must be ACTIVE, INACTIVE or LOCKED')
+    const row = await updateOne('users', req.params.id, { status })
+    await recordAudit(req, 'UPDATE_CUSTOMER_STATUS', 'users', row.id)
+    await recordSecurity(req, 'ACCOUNT_STATUS_CHANGE', 'MEDIUM', `Customer ${row.id} status changed to ${status}`)
+    res.json(row)
+  } catch (e) { next(e) }
+}
+
+export async function employeeStatus(req, res, next) { return customerStatus(req, res, next) }
+
+export async function createEmployee(req, res, next) {
+  try {
+    const { email, password, name, ...profileFields } = req.body
+    if (!email || !password || password.length < 8) throw new ApiError(400, 'Valid email and password are required')
+    // Create Supabase Auth user (server-side only)
+    const { error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true })
+    if (authError) throw new ApiError(400, authError.message)
+    // Create the application users row with a placeholder hash
+    const { data: userRow, error: userError } = await supabaseAdmin.from('users').insert({
+      name: name ?? email,
+      email,
+      password_hash: '$2b$12$placeholder000000000000000000000000000000000000000000000'.slice(0, 60),
+      role: 'EMPLOYEE',
+      status: 'ACTIVE',
+      created_at: new Date().toISOString(),
+    }).select('id').single()
+    assertNoDatabaseError(userError, 'Could not create users row for new employee')
+    // Create the employee_profiles row referencing the new integer users.id
+    const { data: employee, error: profileError } = await supabaseAdmin.from('employee_profiles').insert({
+      ...profileFields,
+      user_id: userRow.id,
+      employee_id: `EMP-NEW-${userRow.id}`,
+    }).select().single()
+    assertNoDatabaseError(profileError, 'Employee profile could not be created')
+    await recordAudit(req, 'CREATE_EMPLOYEE', 'employee_profiles', employee.id)
+    res.status(201).json(employee)
+  } catch (e) { next(e) }
+}
+
+export async function updateEmployee(req, res, next) {
+  try {
+    const row = await updateOne('employee_profiles', req.params.id, req.body)
+    await recordAudit(req, 'UPDATE_EMPLOYEE', 'employee_profiles', row.id)
+    res.json(row)
+  } catch (e) { next(e) }
+}
+
+export const createCustomerSchema = z.object({
+  name: z.string().min(2, 'Name is required'),
+  email: z.string().email('Valid email is required'),
+  phone: z.string().min(5, 'Valid phone number is required'),
+  address: z.string().min(5, 'Address is required')
+})
+
+export async function createCustomer(req, res, next) {
+  let authUserId = null
+  let dbUserId = null
+  try {
+    const input = parse(createCustomerSchema, req.body)
+
+    // 1. Create Auth User
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email: input.email,
+      password: 'NorthstarTemp123!',
+      email_confirm: true
+    })
+    
+    if (authError || !authData.user) {
+      throw new ApiError(400, authError?.message || 'Failed to create authentication identity.')
+    }
+    authUserId = authData.user.id
+
+    // 2. Insert into `users` table
+    const { data: userRow, error: userError } = await supabaseAdmin.from('users').insert({
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      password_hash: '$2b$12$ManagedBySupabaseAuthXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      role: 'CUSTOMER',
+      status: 'ACTIVE'
+    }).select('id').single()
+    
+    if (userError || !userRow) throw new Error('Failed to create user record.')
+    dbUserId = userRow.id
+
+    // 3. Insert into `customer_profiles`
+    const { error: profileError } = await supabaseAdmin.from('customer_profiles').insert({
+      user_id: dbUserId,
+      customer_id: 'CUS-' + Math.floor(100000 + Math.random() * 900000),
+      address: input.address
+    })
+    if (profileError) throw new Error('Failed to create customer profile.')
+
+    // 4. Insert into `accounts`
+    const { error: accError } = await supabaseAdmin.from('accounts').insert({
+      user_id: dbUserId,
+      account_number: '10' + Math.floor(100000000 + Math.random() * 900000000),
+      account_type: 'SAVINGS',
+      balance: 0.00,
+      status: 'ACTIVE'
+    })
+    if (accError) throw new Error('Failed to create account.')
+
+    res.status(201).json({ message: 'Customer created successfully' })
+  } catch (error) {
+    console.error('Customer Creation Failed:', error.message)
+    // Cleanup DB User if created (cascade will handle profiles/accounts if configured, else manual)
+    if (dbUserId) {
+      await supabaseAdmin.from('accounts').delete().eq('user_id', dbUserId).catch(e => console.error('Cleanup account failed', e))
+      await supabaseAdmin.from('customer_profiles').delete().eq('user_id', dbUserId).catch(e => console.error('Cleanup profile failed', e))
+      await supabaseAdmin.from('users').delete().eq('id', dbUserId).catch(e => console.error('Cleanup user failed', e))
+    }
+    // Cleanup Auth User if created
+    if (authUserId) {
+      await supabaseAdmin.auth.admin.deleteUser(authUserId).catch(e => console.error('Cleanup auth failed', e))
+    }
+    
+    if (error instanceof ApiError) return next(error)
+    next(new ApiError(400, 'Failed to create new customer. The operation was aborted. Check if email already exists.'))
+  }
+}
