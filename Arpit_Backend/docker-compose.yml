@@ -1,0 +1,8 @@
+﻿# docker-compose.yml — production placeholder
+# Full production config comes in Phase B6 (Kubernetes migration).
+# For now, use docker-compose.dev.yml for all environments.
+#
+# NOTE: Do NOT use hosted/cloud services. Architecture principle 2:
+# "Local-first. No sensitive bank data leaves the deployment."
+include:
+  - docker-compose.dev.yml

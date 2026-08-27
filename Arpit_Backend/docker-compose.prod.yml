@@ -1,0 +1,5 @@
+﻿# docker-compose.prod.yml — production overrides placeholder
+# Phase B6 implements: resource limits, replica counts, TLS,
+# secrets from Vault, pgBackRest backups, read replicas.
+#
+# This file intentionally left as a stub for Phase B6.

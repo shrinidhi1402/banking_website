@@ -1,0 +1,8 @@
+﻿{# Intent router prompt template - B4.2 #}
+{# Classifies: query | scenario | remediation | compliance | report | meta #}
+{{ system_instruction }}
+
+User query: {{ user_query }}
+
+Classify the intent as one of: query, scenario, remediation, compliance, report, meta.
+Respond ONLY with JSON: {"intent": "<type>", "confidence": <0.0-1.0>}

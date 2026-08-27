@@ -1,0 +1,8 @@
+﻿{# Response formatter prompt template - B4.2 #}
+{{ system_instruction }}
+
+Structured data:
+{{ structured_data | tojson(indent=2) }}
+
+Convert the above data into a clear, concise natural language response.
+STRICT RULE: Do NOT invent numbers. Only use values present in the structured data above.

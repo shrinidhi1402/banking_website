@@ -1,0 +1,7 @@
+﻿{# Query planner prompt template - B4.2 #}
+{{ system_instruction }}
+
+Intent: {{ intent }}
+User query: {{ user_query }}
+
+Convert to a structured query object. Respond ONLY with valid JSON matching the QueryPlan schema.

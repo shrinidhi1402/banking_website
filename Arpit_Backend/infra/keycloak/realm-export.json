@@ -1,0 +1,95 @@
+{
+  "id": "crq",
+  "realm": "crq",
+  "enabled": true,
+  "displayName": "CyberRisk Quantifier",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "ciso",      "description": "CISO / executive — full read access" },
+      { "name": "analyst",   "description": "SOC analyst — technical view, full read" },
+      { "name": "bu_owner",  "description": "Business unit owner — scoped to own BU" },
+      { "name": "auditor",   "description": "Auditor — read-only, audit log access" },
+      { "name": "admin",     "description": "Platform admin — full access" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "crq-api",
+      "name": "CRQ API",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "change-me-in-production",
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:8000/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email", "roles"],
+      "optionalClientScopes": ["offline_access"]
+    },
+    {
+      "clientId": "bank-site",
+      "name": "First Federal Bank of Bharat (Demo Client)",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "bank-site-secret-change-me",
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3001/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3001"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-admin",
+      "email": "admin@crq.local",
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "dev-ciso",
+      "email": "ciso@crq.local",
+      "firstName": "Dev",
+      "lastName": "CISO",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "realmRoles": ["ciso"]
+    },
+    {
+      "username": "dev-analyst",
+      "email": "analyst@crq.local",
+      "firstName": "Dev",
+      "lastName": "Analyst",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "realmRoles": ["analyst"]
+    }
+  ]
+}
