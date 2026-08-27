@@ -22,13 +22,27 @@ export const employeeTransactions   = list('transactions', () => (q) => q.select
 export const employeeRequests       = list('requests', () => (q) => q.select('*, users!requests_user_id_fkey(id, name, email)').order('created_at', { ascending: false }))
 export const managerCustomers       = employeeCustomers
 export const managerCustomer        = employeeCustomer
-export const managerEmployees       = list('employee_profiles', () => (q) => q.order('created_at', { ascending: false }))
+export const managerEmployees       = list('employee_profiles', () => (q) => q.select('*, users!inner(id, name, email, status, role)').order('created_at', { ascending: false }))
 export const managerTransactions    = employeeTransactions
 export const managerRequests        = employeeRequests
 export const securityEvents         = list('security_events', () => (q) => q.order('created_at', { ascending: false }))
 
 export const employeeProfile = (req, res) => res.json(req.auth.profile)
-export const managerProfile  = (req, res) => res.json(req.auth.profile)
+export const managerProfile = async (req, res, next) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('manager_profiles')
+      .select('*, users!inner(id, name, email, phone, role, status)')
+      .eq('user_id', req.auth.profile.id)
+      .single()
+    // If no manager_profiles row exists for this user, fall back to the base users profile
+    if (error?.code === 'PGRST116') return res.json(req.auth.profile)
+    assertNoDatabaseError(error, 'Unable to load manager profile')
+    // Merge: spread users fields first, then manager_profiles fields on top
+    const { users: userRow, ...profileFields } = data
+    res.json({ ...req.auth.profile, ...userRow, ...profileFields })
+  } catch (e) { next(e) }
+}
 
 export async function updateOwnProfile(req, res, next) {
   try {
@@ -42,21 +56,29 @@ export async function updateOwnProfile(req, res, next) {
   } catch (error) { next(error) }
 }
 
-export const suspiciousTransactions = list('transactions', () => (q) => q.eq('is_suspicious', true).order('created_at', { ascending: false }))
+export const suspiciousTransactions = list('transactions', () => (q) => q.gte('amount', 10000).order('created_at', { ascending: false }))
 
 export const reports = async (req, res, next) => {
   try {
-    const [transactions, accounts, customers] = await Promise.all([
+    const [transactions, accounts, customers, employees, requests] = await Promise.all([
       getRows('transactions'),
       getRows('accounts'),
       getRows('customer_profiles'),
+      getRows('employee_profiles'),
+      getRows('requests'),
     ])
+    const suspiciousCount  = transactions.filter(t => t.amount >= 10000).length
+    const pendingReqCount  = requests.filter(r => r.status === 'PENDING').length
+    const totalDeposits    = accounts.reduce((sum, item) => sum + Number(item.balance ?? 0), 0)
     res.json({
       generated_at: new Date().toISOString(),
       totals: {
-        transactions: transactions.length,
-        deposits: accounts.reduce((sum, item) => sum + Number(item.balance ?? 0), 0),
-        customers: customers.length,
+        transactions:          transactions.length,
+        deposits:              totalDeposits,
+        customers:             customers.length,
+        employees:             employees.length,
+        pendingRequests:       pendingReqCount,
+        suspiciousTransactions: suspiciousCount,
       },
     })
   } catch (e) { next(e) }

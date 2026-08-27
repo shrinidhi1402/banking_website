@@ -47,19 +47,16 @@ async function apiDelete(path, token) {
   return data
 }
 
-// ─── Role-specific static config (unchanged from original) ───────────────────
+// ─── Role-specific nav config ─────────────────────────────────────────────────
 const roleConfig = {
   Customer: {
     nav: ['Overview', 'Transfer money', 'Beneficiaries', 'Transactions', 'Profile', 'Security'],
-    metrics: [['Available balance', '$24,860.42', '+$2,840 this month'], ['Total savings', '$41,280.00', '8.2% APY'], ['Credit score', '782', 'Excellent standing']],
   },
   Employee: {
     nav: ['Overview', 'Customers', 'Transactions', 'Requests', 'Profile', 'Security'],
-    metrics: [['Customers handled', '284', '+18 this month'], ['Pending requests', '12', '4 need attention'], ['Service rating', '4.9 / 5', '+0.2 this quarter']],
   },
   Manager: {
-    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports'],
-    metrics: [['Total customers', '12,842', '+6.8% this year'], ['Total deposits', '$84.6M', '+12.4% this year'], ['Transactions', '48,291', 'Last 30 days'], ['Suspicious activity', '7', '2 high priority']],
+    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports', 'Profile'],
   },
 }
 
@@ -70,7 +67,7 @@ function toRoleKey(dbRole) {
 }
 
 const transactions = [['Whole Foods Market', 'Groceries - Today, 10:42 AM', '-$86.24', 'debit'], ['Acme Studio LLC', 'Incoming transfer - Yesterday', '+$3,200.00', 'credit'], ['Netflix.com', 'Subscription - Aug 21', '-$15.49', 'debit'], ['Cedar & Stone', 'Dining - Aug 20', '-$64.80', 'debit'], ['Direct deposit', 'Payroll - Aug 18', '+$4,850.00', 'credit']]
-const customers  = [['Olivia Bennett', '•• 4821', '$18,420.65', 'Active'], ['Noah Williams', '•• 1093', '$42,106.20', 'Active'], ['Ethan Caldwell', '•• 7738', '$8,930.10', 'Review'], ['Sophia Davis', '•• 6204', '$65,240.00', 'Active']]
+const customers  = [['Olivia Bennett', '4821', '$18,420.65', 'Active'], ['Noah Williams', '1093', '$42,106.20', 'Active'], ['Ethan Caldwell', '7738', '$8,930.10', 'Review'], ['Sophia Davis', '6204', '$65,240.00', 'Active']]
 
 function Icon({ children }) { return <span className="icon" aria-hidden="true">{children}</span> }
 
@@ -79,12 +76,10 @@ export default function App() {
   const [session, setSession]   = useState(null)   // { access_token, user }
   const [active, setActive]     = useState('Overview')
   const [notice, setNotice]     = useState('')
-  // Demo role-override: lets a logged-in user view other role dashboards for demo purposes.
-  // The server NEVER trusts this; all API calls use the real access_token.
-  const [demoRole, setDemoRole] = useState(null)
 
   const [customerData, setCustomerData] = useState({ account: null, transactions: [], beneficiaries: [], profile: null, loading: true })
   const [employeeData, setEmployeeData] = useState({ dashboard: [], customers: [], transactions: [], requests: [], profile: null, loading: true })
+  const [managerData,  setManagerData]  = useState({ dashboard: null, customers: [], employees: [], transactions: [], requests: [], suspiciousTransactions: [], securityEvents: [], reports: null, profile: null, loading: true })
 
   const refreshCustomerData = useCallback(async () => {
     if (!session || session.user?.role !== 'CUSTOMER') return
@@ -121,20 +116,52 @@ export default function App() {
     }
   }, [session])
 
+  const refreshManagerData = useCallback(async () => {
+    if (!session || session.user?.role !== 'MANAGER') return
+    setManagerData(prev => ({ ...prev, loading: true }))
+    try {
+      const [rpts, custs, emps, txs, reqs, suspicious, secEvts, prof] = await Promise.all([
+        apiGet('/manager/reports',               session.access_token),
+        apiGet('/manager/customers',             session.access_token),
+        apiGet('/manager/employees',             session.access_token),
+        apiGet('/manager/transactions',          session.access_token),
+        apiGet('/manager/requests',              session.access_token),
+        apiGet('/manager/transactions/suspicious', session.access_token),
+        apiGet('/manager/security-events',       session.access_token),
+        apiGet('/manager/profile',               session.access_token),
+      ])
+      setManagerData({
+        dashboard: rpts,
+        customers: custs,
+        employees: emps,
+        transactions: txs,
+        requests: reqs,
+        suspiciousTransactions: suspicious,
+        securityEvents: secEvts,
+        reports: rpts,
+        profile: prof,
+        loading: false,
+      })
+    } catch (e) {
+      console.error('Failed to fetch manager data', e)
+      setManagerData(prev => ({ ...prev, loading: false }))
+    }
+  }, [session])
+
   useEffect(() => {
     if (session?.user?.role === 'CUSTOMER') {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       refreshCustomerData()
     } else if (session?.user?.role === 'EMPLOYEE') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       refreshEmployeeData()
+    } else if (session?.user?.role === 'MANAGER') {
+      refreshManagerData()
     }
-  }, [session, refreshCustomerData, refreshEmployeeData])
+  }, [session, refreshCustomerData, refreshEmployeeData, refreshManagerData])
 
   const handleLogin = useCallback((sessionData) => {
     setSession(sessionData)
     setActive('Overview')
-    setDemoRole(null)
   }, [])
 
   const handleLogout = useCallback(async () => {
@@ -145,49 +172,36 @@ export default function App() {
     } catch { /* ignore logout errors */ }
     setSession(null)
     setActive('Overview')
-    setDemoRole(null)
   }, [session])
 
   if (!session) return <LoginPage onLogin={handleLogin} />
 
   const dbRole     = session.user?.role                        // CUSTOMER / EMPLOYEE / MANAGER
-  const roleKey    = demoRole ?? toRoleKey(dbRole)             // Customer / Employee / Manager
+  const roleKey    = toRoleKey(dbRole)                         // Customer / Employee / Manager
   const current    = roleConfig[roleKey] ?? roleConfig.Customer
   const userName   = session.user?.name ?? 'You'
   const initials   = userName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
 
   function action(message) { setNotice(message); window.setTimeout(() => setNotice(''), 2800) }
-  function chooseDemo(key) { setDemoRole(key); setActive('Overview'); setNotice('') }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">N</span><span>northstar<span className="brand-dot">.</span></span></div>
-        <div className="workspace-label">Workspace</div>
-
-        {/* Demo role-switcher: only shows roles the authenticated user's role can see.
-            The switcher is purely cosmetic – the backend always uses the real token role. */}
-        <div className="role-switcher">
-          {Object.keys(roleConfig).map((key) => (
-            <button
-              key={key}
-              className={roleKey === key ? 'role active' : 'role'}
-              onClick={() => chooseDemo(key)}
-              title={key === toRoleKey(dbRole) ? 'Your role' : 'Demo view only'}
-            >
-              {key}
-              <span>{roleKey === key ? '●' : ''}</span>
-            </button>
-          ))}
-        </div>
 
         <nav className="nav-list">
           <div className="workspace-label">Navigate</div>
           {current.nav.map((item, index) => (
             <button key={item} className={active === item ? 'nav-item selected' : 'nav-item'} onClick={() => setActive(item)}>
-              <Icon>{['⌂', '↗', '◇', '≡', '♙', '◈', '▦'][index]}</Icon>
+              <Icon>{['⌂', '↗', '◇', '≡', '♙', '◈', '▦', '✦'][index]}</Icon>
               {item}
-              {item === 'Requests' && <span className="nav-count">12</span>}
+              {item === 'Requests' && (
+                <span className="nav-count">
+                  {dbRole === 'MANAGER'
+                    ? (managerData.requests || []).filter(r => r.status === 'PENDING').length || ''
+                    : (employeeData.requests || []).filter(r => r.status === 'PENDING').length || ''}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -234,8 +248,8 @@ export default function App() {
             </div>
           </div>
           {active === 'Overview'
-            ? <Dashboard roleKey={roleKey} current={current} action={action} customerData={customerData} employeeData={employeeData} />
-            : <WorkspacePage active={active} action={action} customerData={customerData} employeeData={employeeData} session={session} refresh={refreshCustomerData} refreshEmployee={refreshEmployeeData} />}
+            ? <Dashboard roleKey={roleKey} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} />
+            : <WorkspacePage active={active} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} session={session} refresh={refreshCustomerData} refreshEmployee={refreshEmployeeData} refreshManager={refreshManagerData} />}
         </div>
       </main>
     </div>
@@ -309,7 +323,7 @@ function LoginPage({ onLogin }) {
             type="submit"
             disabled={loading}
           >
-            {loading ? 'Signing in…' : 'Sign in →'}
+            {loading ? 'Signing in\u2026' : 'Sign in \u2192'}
           </button>
         </form>
 
@@ -320,8 +334,8 @@ function LoginPage({ onLogin }) {
 }
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({ roleKey, current, action, customerData, employeeData }) {
-  let displayMetrics = current.metrics
+function Dashboard({ roleKey, action, customerData, employeeData, managerData }) {
+  let displayMetrics = []
   let displayTransactions = transactions
 
   if (roleKey === 'Customer' && customerData && !customerData.loading && customerData.account) {
@@ -355,6 +369,33 @@ function Dashboard({ roleKey, current, action, customerData, employeeData }) {
         `${tx.transaction_type} - ${new Date(tx.created_at).toLocaleDateString()}`,
         '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
         'credit'
+      ]
+    })
+  } else if (roleKey === 'Manager') {
+    if (managerData && !managerData.loading && managerData.reports) {
+      const t = managerData.reports.totals
+      displayMetrics = [
+        ['Total customers',     t.customers.toLocaleString(),                                    'All registered customers'],
+        ['Total deposits',      '$' + Number(t.deposits).toLocaleString(undefined, { maximumFractionDigits: 0 }), 'Across all accounts'],
+        ['Transactions',        t.transactions.toLocaleString(),                                 'All time'],
+        ['Suspicious activity', t.suspiciousTransactions.toString(),                             t.suspiciousTransactions > 0 ? `${t.suspiciousTransactions} need review` : 'None flagged'],
+      ]
+    } else {
+      displayMetrics = [
+        ['Total customers',     '\u2014', 'Loading\u2026'],
+        ['Total deposits',      '\u2014', 'Loading\u2026'],
+        ['Transactions',        '\u2014', 'Loading\u2026'],
+        ['Suspicious activity', '\u2014', 'Loading\u2026'],
+      ]
+    }
+    displayTransactions = (managerData?.transactions || []).slice(0, 5).map(tx => {
+      const senderName   = tx.sender?.users?.name   || 'Unknown'
+      const receiverName = tx.receiver?.users?.name || 'Unknown'
+      return [
+        tx.description || tx.transaction_type,
+        `${senderName} \u2192 ${receiverName} \u00b7 ${new Date(tx.created_at).toLocaleDateString()}`,
+        '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
+        (tx.amount >= 10000) ? 'debit' : 'credit'
       ]
     })
   }
@@ -417,28 +458,33 @@ function Dashboard({ roleKey, current, action, customerData, employeeData }) {
       <section className="panel table-panel">
         <div className="panel-heading">
           <div>
-            <h2>{roleKey === 'Customer' ? 'Upcoming payments' : roleKey === 'Employee' ? 'Customer requests' : 'Priority watchlist'}</h2>
+            <h2>{roleKey === 'Customer' ? 'Upcoming payments' : roleKey === 'Employee' ? 'Customer requests' : 'Pending requests'}</h2>
             <p>{roleKey === 'Customer' ? 'Scheduled in the next 7 days' : 'Items that need your attention'}</p>
           </div>
           <button className="text-button" onClick={() => action('Opening the full list')}>View all</button>
         </div>
         <div className="table-scroll">
           <table>
-            <thead><tr><th>{roleKey === 'Customer' ? 'PAYEE' : 'CUSTOMER'}</th><th>DATE</th><th>AMOUNT</th><th>STATUS</th><th /></tr></thead>
+            <thead><tr><th>{roleKey === 'Customer' ? 'PAYEE' : 'CUSTOMER'}</th><th>DATE</th><th>{roleKey === 'Manager' ? 'TYPE' : 'AMOUNT'}</th><th>STATUS</th><th /></tr></thead>
             <tbody>
               {(roleKey === 'Customer'
                 ? [['Adobe Creative Cloud', 'Aug 28', '$59.99', 'Scheduled'], ['Rent payment', 'Sep 01', '$1,850.00', 'Scheduled'], ['Electric company', 'Sep 03', '$124.70', 'Scheduled']]
-                : customers.slice(0, 3).map((c, index) => [c[0], index === 0 ? 'Account review' : 'Transfer request', index === 0 ? '$3,200.00' : '$850.00', c[3]])
-              ).map((row) => (
-                <tr key={row[0]}>
+                : roleKey === 'Manager'
+                  ? (managerData?.requests || []).filter(r => r.status === 'PENDING').slice(0, 3).map(r => [r.users?.name || 'Customer', new Date(r.created_at).toLocaleDateString(), r.request_type || '—', r.status])
+                  : customers.slice(0, 3).map((c, index) => [c[0], index === 0 ? 'Account review' : 'Transfer request', index === 0 ? '$3,200.00' : '$850.00', c[3]])
+              ).map((row, rowIdx) => (
+                <tr key={row[0] + rowIdx}>
                   {row.map((cell, index) => (
-                    <td key={cell} className={index === 3 ? 'status-cell' : index === 2 ? 'amount-cell' : ''}>
+                    <td key={cell + index} className={index === 3 ? 'status-cell' : index === 2 ? 'amount-cell' : ''}>
                       {index === 3 ? <span className={`status ${cell.toLowerCase()}`}>{cell}</span> : cell}
                     </td>
                   ))}
                   <td><button className="more-button" onClick={() => action(`Opening ${row[0]}`)}>•••</button></td>
                 </tr>
               ))}
+              {roleKey === 'Manager' && (managerData?.requests || []).filter(r => r.status === 'PENDING').length === 0 && (
+                <tr><td colSpan="5" style={{textAlign:'center', padding:'20px', color:'#9aa5b5'}}>No pending requests.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -447,8 +493,8 @@ function Dashboard({ roleKey, current, action, customerData, employeeData }) {
   )
 }
 
-// ─── Workspace page (unchanged from original) ─────────────────────────────────
-function WorkspacePage({ active, action, customerData, employeeData, session, refresh, refreshEmployee }) {
+// ─── Workspace page ────────────────────────────────────────────────────────────
+function WorkspacePage({ active, action, customerData, employeeData, managerData, session, refresh, refreshEmployee, refreshManager }) {
   const titles = {
     'Transfer money': ['Send money securely', 'Move money to a saved beneficiary or a new account.'],
     Beneficiaries:   ['Your beneficiaries', 'Manage the people and businesses you send money to.'],
@@ -461,20 +507,27 @@ function WorkspacePage({ active, action, customerData, employeeData, session, re
     Profile:         ['Your profile', 'Keep your personal details and preferences up to date.'],
   }
   const [title, description] = titles[active] || ['Change password', 'Keep your account secure with a strong, unique password.']
-  
+
   let Content
   const isCust = session?.user?.role === 'CUSTOMER'
   const isEmp  = session?.user?.role === 'EMPLOYEE'
+  const isMgr  = session?.user?.role === 'MANAGER'
 
-  if (active === 'Transfer money') Content = <TransferForm action={action} customerData={customerData} session={session} refresh={refresh} />
-  else if (active === 'Customers' || active === 'Employees') Content = <Directory active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
-  else if (active === 'Transactions' && isCust) Content = <TransactionsPanel action={action} customerData={customerData} />
-  else if (active === 'Transactions' && isEmp) Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
-  else if (active === 'Requests' && isEmp) Content = <GenericPanel active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
-  else if (active === 'Beneficiaries' && isCust) Content = <BeneficiariesPanel action={action} customerData={customerData} session={session} refresh={refresh} />
-  else if (active === 'Profile' && isCust) Content = <ProfileForm action={action} customerData={customerData} session={session} refresh={refresh} />
-  else if (active === 'Profile' && isEmp) Content = <ProfileForm action={action} employeeData={employeeData} session={session} refresh={refreshEmployee} />
-  else if (active === 'Security') Content = <PasswordForm action={action} session={session} />
+  if (active === 'Transfer money')                        Content = <TransferForm action={action} customerData={customerData} session={session} refresh={refresh} />
+  else if (active === 'Customers'  && (isEmp || isMgr))  Content = <Directory active={active} action={action} employeeData={isEmp ? employeeData : managerData} session={session} refreshEmployee={isEmp ? refreshEmployee : refreshManager} isMgr={isMgr} />
+  else if (active === 'Employees'  && isMgr)             Content = <Directory active={active} action={action} employeeData={managerData} session={session} refreshEmployee={refreshManager} isMgr={isMgr} />
+  else if (active === 'Transactions' && isCust)          Content = <TransactionsPanel action={action} customerData={customerData} />
+  else if (active === 'Transactions' && isEmp)           Content = <GenericPanel active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
+  else if (active === 'Transactions' && isMgr)           Content = <ManagerTransactionsPanel action={action} managerData={managerData} />
+  else if (active === 'Requests'   && isEmp)             Content = <GenericPanel active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
+  else if (active === 'Requests'   && isMgr)             Content = <ManagerRequestsPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} />
+  else if (active === 'Beneficiaries' && isCust)         Content = <BeneficiariesPanel action={action} customerData={customerData} session={session} refresh={refresh} />
+  else if (active === 'Profile'    && isCust)            Content = <ProfileForm action={action} customerData={customerData} session={session} refresh={refresh} />
+  else if (active === 'Profile'    && isEmp)             Content = <ProfileForm action={action} employeeData={employeeData} session={session} refresh={refreshEmployee} />
+  else if (active === 'Profile'    && isMgr)             Content = <ManagerProfileForm action={action} managerData={managerData} session={session} refresh={refreshManager} />
+  else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} />
+  else if (active === 'Security')                        Content = <PasswordForm action={action} session={session} />
+  else if (active === 'Reports'    && isMgr)             Content = <ManagerReportsPanel action={action} managerData={managerData} />
   else Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
 
   return (
@@ -495,11 +548,10 @@ function TransferForm({ action, customerData, session, refresh }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Use optional chaining carefully to avoid errors if customerData is still loading
   const account = customerData?.account
   const beneficiaries = customerData?.beneficiaries || []
   const bal = account ? '$' + Number(account.balance).toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''
-  const accNum = account ? '•• ' + account.account_number.slice(-4) : '••'
+  const accNum = account ? '\u2022\u2022 ' + account.account_number.slice(-4) : '\u2022\u2022'
 
   const handleSubmit = async () => {
     if (!amount || !toBeneficiaryId) {
@@ -524,23 +576,23 @@ function TransferForm({ action, customerData, session, refresh }) {
 
   return (
     <div className="form-panel">
-      <div className="form-field"><label>From account</label><div className="fake-input"><span className="account-chip">••</span><span>Everyday account <small>{accNum} · {bal}</small></span><b>⌄</b></div></div>
+      <div className="form-field"><label>From account</label><div className="fake-input"><span className="account-chip">\u2022\u2022</span><span>Everyday account <small>{accNum} \u00b7 {bal}</small></span><b>\u2304</b></div></div>
       <div className="form-field">
         <label>To beneficiary</label>
         <select className="text-input" value={toBeneficiaryId} onChange={(e) => setToBeneficiaryId(e.target.value)}>
           <option value="">Select a beneficiary</option>
           {beneficiaries.map(b => (
-            <option key={b.id} value={b.id}>{b.beneficiary_name} (•• {b.account_number.slice(-4)})</option>
+            <option key={b.id} value={b.id}>{b.beneficiary_name} (\u2022\u2022 {b.account_number.slice(-4)})</option>
           ))}
         </select>
       </div>
       <div className="form-row">
         <div className="form-field"><label>Amount</label><div className="amount-input"><span>$</span><input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} /></div></div>
-        <div className="form-field"><label>When</label><div className="fake-input compact">Today <b>⌄</b></div></div>
+        <div className="form-field"><label>When</label><div className="fake-input compact">Today <b>\u2304</b></div></div>
       </div>
       <div className="form-field"><label>Reference <small>(optional)</small></label><input className="text-input" placeholder="What is this for?" value={reference} onChange={e => setReference(e.target.value)} /></div>
       {error && <div className="login-error">{error}</div>}
-      <div className="form-footer"><span>Transfers are protected by Northstar Secure.</span><button className="primary-button" onClick={handleSubmit} disabled={loading}>{loading ? 'Processing...' : <>Continue <span>→</span></>}</button></div>
+      <div className="form-footer"><span>Transfers are protected by Northstar Secure.</span><button className="primary-button" onClick={handleSubmit} disabled={loading}>{loading ? 'Processing...' : 'Continue \u2192'}</button></div>
     </div>
   )
 }
@@ -562,10 +614,235 @@ function TransactionsPanel({ action, customerData }) {
             <span className={`transaction-icon ${isDebit ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
             <div><b>{tx.description || tx.transaction_type}</b><small>{tx.transaction_type} - {new Date(tx.created_at).toLocaleDateString()}</small></div>
             <strong>{(isDebit ? '-' : '+') + '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-            <button className="text-button" onClick={() => action(`Opening ${tx.id}`)}>View →</button>
+            <button className="text-button" onClick={() => action(`Opening ${tx.id}`)}>View \u2192</button>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Manager Transactions Panel ───────────────────────────────────────────────
+function ManagerTransactionsPanel({ action, managerData }) {
+  const txList = managerData?.transactions || []
+  return (
+    <div className="panel generic-panel">
+      <div className="directory-toolbar">
+        <div className="search"><span>⌕</span><input placeholder="Search transactions..." /></div>
+        <button className="select-button">All types ⌄</button>
+      </div>
+      {txList.length === 0 ? (
+        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No transactions found.</div>
+      ) : txList.map(tx => {
+        const senderName   = tx.sender?.users?.name   || 'Unknown'
+        const receiverName = tx.receiver?.users?.name || 'Unknown'
+        return (
+          <div className="generic-row" key={tx.id}>
+            <span className={`transaction-icon ${(tx.amount >= 10000) ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
+            <div>
+              <b>{tx.description || tx.transaction_type}</b>
+              <small>{senderName} \u2192 {receiverName} \u00b7 {new Date(tx.created_at).toLocaleDateString()}</small>
+            </div>
+            <strong>${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+            <span className={`status ${(tx.status || 'completed').toLowerCase()}`}>{tx.status || 'COMPLETED'}</span>
+            {(tx.amount >= 10000) && <span className="status review" style={{marginLeft:'6px'}}>\u26a0 Suspicious</span>}
+            <button className="text-button" onClick={() => action(`Transaction ${tx.id}`)}>View \u2192</button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Manager Requests Panel ───────────────────────────────────────────────────
+function ManagerRequestsPanel({ action, managerData, session, refreshManager }) {
+  const [handling, setHandling] = useState(null)
+  const requests = managerData?.requests || []
+
+  const handleDecision = async (id, status) => {
+    if (!id || !session) return
+    setHandling(id)
+    try {
+      await apiPut(`/manager/requests/${id}`, { status }, session.access_token)
+      action(`Request ${status.toLowerCase()} successfully`)
+      if (refreshManager) await refreshManager()
+    } catch (e) {
+      action(e.message || 'Error processing request')
+    } finally {
+      setHandling(null)
+    }
+  }
+
+  return (
+    <div className="panel generic-panel">
+      <div className="directory-toolbar">
+        <div className="search"><span>⌕</span><input placeholder="Search requests..." /></div>
+        <button className="select-button">All statuses ⌄</button>
+      </div>
+      {requests.length === 0 ? (
+        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No requests found.</div>
+      ) : requests.map(req => {
+        const custName = req.users?.name || 'Unknown Customer'
+        return (
+          <div className="generic-row" key={req.id}>
+            <span className={`transaction-icon ${req.status === 'PENDING' ? 'warning' : 'credit'}`}>\u2713</span>
+            <div>
+              <b>{req.request_type}</b>
+              <small>{custName} \u00b7 {new Date(req.created_at).toLocaleDateString()}{req.description ? ` \u00b7 ${req.description}` : ''}</small>
+            </div>
+            <strong>{req.description || '\u2014'}</strong>
+            {req.status === 'PENDING' ? (
+              <div style={{display:'flex', gap:'10px'}}>
+                <button className="text-button" disabled={handling === req.id} style={{color:'var(--coral)'}} onClick={() => handleDecision(req.id, 'REJECTED')}>Reject</button>
+                <button className="primary-button" disabled={handling === req.id} style={{padding:'6px 12px', fontSize:'13px'}} onClick={() => handleDecision(req.id, 'APPROVED')}>{handling === req.id ? '...' : 'Approve'}</button>
+              </div>
+            ) : (
+              <span className={`status ${req.status?.toLowerCase()}`}>{req.status}</span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Manager Security Panel ───────────────────────────────────────────────────
+function ManagerSecurityPanel({ action, managerData }) {
+  const events = managerData?.securityEvents || []
+  return (
+    <div className="panel generic-panel">
+      <div className="directory-toolbar">
+        <div className="search"><span>⌕</span><input placeholder="Search security events..." /></div>
+        <button className="select-button">All severities ⌄</button>
+      </div>
+      {events.length === 0 ? (
+        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No security events found.</div>
+      ) : events.map(ev => (
+        <div className="generic-row" key={ev.id}>
+          <span className={`transaction-icon ${ev.severity === 'HIGH' ? 'debit' : ev.severity === 'MEDIUM' ? 'warning' : 'credit'}`}>
+            {ev.severity === 'HIGH' ? '!' : ev.severity === 'MEDIUM' ? '\u26a0' : '\u2713'}
+          </span>
+          <div>
+            <b>{ev.event_type}</b>
+            <small>{ev.description} \u00b7 {new Date(ev.created_at).toLocaleDateString()}{ev.ip_address ? ` \u00b7 IP: ${ev.ip_address}` : ''}</small>
+          </div>
+          <span className={`status ${ev.severity === 'HIGH' ? 'review' : ev.severity === 'MEDIUM' ? 'scheduled' : 'active'}`}>{ev.severity}</span>
+          <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View \u2192</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Manager Reports Panel ────────────────────────────────────────────────────
+function ManagerReportsPanel({ managerData }) {
+  const r = managerData?.reports
+  const loading = managerData?.loading
+
+  if (loading) return <div style={{padding:'40px', textAlign:'center', color:'#9aa5b5'}}>Loading reports\u2026</div>
+  if (!r)      return <div style={{padding:'40px', textAlign:'center', color:'#9aa5b5'}}>No report data available.</div>
+
+  const t = r.totals
+  const fmt    = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })
+  const fmtCur = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <div>
+      <div style={{marginBottom:'12px', color:'#9aa5b5', fontSize:'13px'}}>
+        Report generated: {new Date(r.generated_at).toLocaleString()}
+      </div>
+      <section className="metric-grid four">
+        {[
+          ['Total Customers',    fmt(t.customers),     'Registered accounts'],
+          ['Total Employees',    fmt(t.employees),     'Active staff'],
+          ['Total Transactions', fmt(t.transactions),  'All time'],
+          ['Total Deposits',     fmtCur(t.deposits),   'Across all accounts'],
+        ].map(([label, value, note]) => (
+          <div className="metric-card" key={label}>
+            <div className="metric-top"><span>{label}</span><span className="metric-icon tint-0">\u2197</span></div>
+            <strong>{value}</strong>
+            <small><span>\u2197</span> {note}</small>
+          </div>
+        ))}
+      </section>
+      <section className="metric-grid" style={{marginTop:'16px'}}>
+        {[
+          ['Pending Requests',        fmt(t.pendingRequests),        t.pendingRequests > 0 ? `${t.pendingRequests} need attention` : 'All processed'],
+          ['Suspicious Transactions', fmt(t.suspiciousTransactions), t.suspiciousTransactions > 0 ? `${t.suspiciousTransactions} flagged` : 'None flagged'],
+        ].map(([label, value, note], index) => (
+          <div className="metric-card" key={label}>
+            <div className="metric-top"><span>{label}</span><span className={`metric-icon tint-${index + 2}`}>{index === 0 ? '\u25d2' : '!'}</span></div>
+            <strong>{value}</strong>
+            <small className={note.includes('attention') || note.includes('flagged') ? 'warning-text' : ''}><span>\u2197</span> {note}</small>
+          </div>
+        ))}
+      </section>
+
+      {t.suspiciousTransactions > 0 && (
+        <section className="panel table-panel" style={{marginTop:'24px'}}>
+          <div className="panel-heading">
+            <div><h2>Suspicious Transactions</h2><p>Transactions flagged for review</p></div>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>ID</th><th>TYPE</th><th>AMOUNT</th><th>DATE</th><th>STATUS</th></tr></thead>
+              <tbody>
+                {(managerData?.suspiciousTransactions || []).slice(0, 10).map(tx => (
+                  <tr key={tx.id}>
+                    <td>{tx.id}</td>
+                    <td>{tx.transaction_type}</td>
+                    <td className="amount-cell">${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td>{new Date(tx.created_at).toLocaleDateString()}</td>
+                    <td className="status-cell"><span className="status review">\u26a0 Suspicious</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+// ─── Manager Profile Form ─────────────────────────────────────────────────────
+function ManagerProfileForm({ action, managerData, session, refresh }) {
+  const profile = managerData?.profile
+  const [department, setDepartment] = useState('')
+  const [branch,     setBranch]     = useState('')
+  const [loading,    setLoading]    = useState(false)
+
+  useEffect(() => {
+    if (profile) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDepartment(profile.department || '')
+      setBranch(profile.branch || '')
+    }
+  }, [profile])
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await apiPut('/manager/profile', { department, branch }, session.access_token)
+      action('Profile updated successfully')
+      if (refresh) refresh()
+    } catch (err) {
+      action(err.message || 'Error updating profile')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="form-panel">
+      <form onSubmit={handleSubmit}>
+        <div className="form-field"><label>Name</label><input className="text-input" value={session?.user?.name || ''} disabled /></div>
+        <div className="form-field"><label>Email address</label><input className="text-input" value={session?.user?.email || ''} disabled /></div>
+        <div className="form-field"><label>Department</label><input className="text-input" value={department} onChange={e => setDepartment(e.target.value)} /></div>
+        <div className="form-field"><label>Branch</label><input className="text-input" value={branch} onChange={e => setBranch(e.target.value)} /></div>
+        <div className="form-footer"><span /><button type="submit" disabled={loading} className="primary-button">{loading ? 'Saving...' : 'Save Profile'}</button></div>
+      </form>
     </div>
   )
 }
@@ -577,7 +854,7 @@ function BeneficiariesPanel({ action, customerData, session, refresh }) {
   const [bank, setBank] = useState('')
   const [ifsc, setIfsc] = useState('')
   const [loading, setLoading] = useState(false)
-  
+
   const handleAdd = async (e) => {
     e.preventDefault()
     if (!name || !accNum || !bank || !ifsc) return
@@ -626,9 +903,9 @@ function BeneficiariesPanel({ action, customerData, session, refresh }) {
               {beneficiariesList.map((b) => (
                 <tr key={b.id}>
                   <td className="person-cell"><span className="avatar">{(b.beneficiary_name || '').split(' ').map((n) => n[0] || '').join('').slice(0, 2)}</span><b>{b.beneficiary_name}</b></td>
-                  <td>•• {b.account_number.slice(-4)}</td>
+                  <td>\u2022\u2022 {b.account_number.slice(-4)}</td>
                   <td>{b.bank_name}</td>
-                  <td className="status-cell"><span className={`status active`}>Active</span></td>
+                  <td className="status-cell"><span className="status active">Active</span></td>
                   <td><button className="text-button" style={{color:'var(--coral)'}} onClick={() => handleDelete(b.id)}>Delete</button></td>
                 </tr>
               ))}
@@ -645,14 +922,10 @@ function ProfileForm({ action, customerData, employeeData, session, refresh }) {
   const profile = customerData?.profile || employeeData?.profile
   const isEmp = session?.user?.role === 'EMPLOYEE'
 
-  // Customer fields
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
-  
-  // Employee fields
   const [department, setDepartment] = useState('')
   const [branch, setBranch] = useState('')
-
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -662,7 +935,6 @@ function ProfileForm({ action, customerData, employeeData, session, refresh }) {
         setPhone(profile.phone_number || '')
         setAddress(profile.address || '')
       } else {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setDepartment(profile.department || '')
         setBranch(profile.branch || '')
       }
@@ -781,11 +1053,22 @@ function NewCustomerForm({ onCancel, onSuccess, session, action }) {
   )
 }
 
-function Directory({ active, action, employeeData, session, refreshEmployee }) {
+function Directory({ active, action, employeeData, session, refreshEmployee, isMgr }) {
   const [showAdd, setShowAdd] = useState(false)
   let rows = customers
+
   if (active === 'Employees') {
-    rows = [['Jordan Lee', 'Client success', '284 customers', 'Active'], ['Priya Shah', 'Risk & compliance', '—', 'Active'], ['Marcus Green', 'Relationship manager', '192 customers', 'Away'], ['Lena Ortiz', 'Client success', '241 customers', 'Active']]
+    // Real employee data (passed as employeeData for manager)
+    if (employeeData?.employees && employeeData.employees.length > 0) {
+      rows = employeeData.employees.map(e => [
+        e.users?.name || `Employee ${e.user_id}`,
+        e.department || 'Staff',
+        e.branch || '\u2014',
+        e.users?.status || 'ACTIVE'
+      ])
+    } else {
+      rows = []
+    }
   } else if (active === 'Customers' && employeeData?.customers) {
     rows = employeeData.customers.map(c => [
       c.users?.name || 'Unknown',
@@ -797,25 +1080,27 @@ function Directory({ active, action, employeeData, session, refreshEmployee }) {
 
   return (
     <>
-      {showAdd && active === 'Customers' && (
-        <NewCustomerForm 
-          action={action} 
-          session={session} 
+      {showAdd && active === 'Customers' && !isMgr && (
+        <NewCustomerForm
+          action={action}
+          session={session}
           onCancel={() => setShowAdd(false)}
-          onSuccess={() => { setShowAdd(false); refreshEmployee(); }} 
+          onSuccess={() => { setShowAdd(false); refreshEmployee(); }}
         />
       )}
       <div className="panel directory-panel">
         <div className="directory-toolbar">
           <div className="search"><span>⌕</span><input placeholder={`Search ${active.toLowerCase()}...`} /></div>
-          <button className="primary-button" onClick={() => {
-            if (active === 'Customers') setShowAdd(!showAdd)
-            else action(`New employee form opened`)
-          }}>+ Add {active === 'Employees' ? 'employee' : 'customer'}</button>
+          {!isMgr && (
+            <button className="primary-button" onClick={() => {
+              if (active === 'Customers') setShowAdd(!showAdd)
+              else action('New employee form opened')
+            }}>+ Add {active === 'Employees' ? 'employee' : 'customer'}</button>
+          )}
         </div>
         <div className="table-scroll">
           <table>
-            <thead><tr><th>NAME</th><th>{active === 'Employees' ? 'ROLE' : 'CUSTOMER ID'}</th><th>{active === 'Employees' ? 'PORTFOLIO' : 'PLAN'}</th><th>STATUS</th><th /></tr></thead>
+            <thead><tr><th>NAME</th><th>{active === 'Employees' ? 'DEPARTMENT' : 'CUSTOMER ID'}</th><th>{active === 'Employees' ? 'BRANCH' : 'PLAN'}</th><th>STATUS</th><th /></tr></thead>
             <tbody>
               {rows.map((row, rIdx) => (
                 <tr key={row[0] + rIdx}>
@@ -828,6 +1113,7 @@ function Directory({ active, action, employeeData, session, refreshEmployee }) {
                   <td><button className="more-button" onClick={() => action(`Opening ${row[0]}`)}>•••</button></td>
                 </tr>
               ))}
+              {rows.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'20px', color:'#9aa5b5'}}>No {active.toLowerCase()} found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -844,7 +1130,7 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
       const receiverName = tx.receiver?.users?.name || 'Unknown Receiver'
       return [
         `${tx.transaction_type} - ${tx.description || 'Transfer'}`,
-        `${senderName} → ${receiverName} - ${new Date(tx.created_at).toLocaleDateString()}`,
+        `${senderName} \u2192 ${receiverName} - ${new Date(tx.created_at).toLocaleDateString()}`,
         '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
         tx.status
       ]
@@ -857,7 +1143,7 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
         `${custName} - ${new Date(req.created_at).toLocaleDateString()}`,
         req.description,
         req.status,
-        req.id // Keep ID for actions
+        req.id
       ]
     })
   } else {
@@ -889,19 +1175,19 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
       </div>
       {items.map((item, index) => (
         <div className="generic-row" key={item[0] + index}>
-          <span className={`transaction-icon ${item[3] === 'PENDING' ? 'warning' : 'credit'}`}>{active === 'Transactions' ? item[0][0] : '✓'}</span>
+          <span className={`transaction-icon ${item[3] === 'PENDING' ? 'warning' : 'credit'}`}>{active === 'Transactions' ? item[0][0] : '\u2713'}</span>
           <div><b>{item[0]}</b><small>{item[1]}</small></div>
           <strong>{item[2]}</strong>
-          
+
           {active === 'Requests' && item[3] === 'PENDING' && item[4] ? (
             <div style={{display:'flex', gap:'10px'}}>
               <button className="text-button" disabled={handling === item[4]} style={{color:'var(--coral)'}} onClick={() => handleDecision(item[4], 'REJECTED')}>Reject</button>
               <button className="primary-button" disabled={handling === item[4]} style={{padding: '6px 12px', fontSize: '13px'}} onClick={() => handleDecision(item[4], 'APPROVED')}>{handling === item[4] ? '...' : 'Approve'}</button>
             </div>
           ) : (
-             <button className="text-button" onClick={() => action(`Opening ${item[0]}`)}>
-               {active === 'Requests' ? <span className={`status ${item[3]?.toLowerCase()}`}>{item[3]}</span> : 'View →'}
-             </button>
+            <button className="text-button" onClick={() => action(`Opening ${item[0]}`)}>
+              {active === 'Requests' ? <span className={`status ${item[3]?.toLowerCase()}`}>{item[3]}</span> : 'View \u2192'}
+            </button>
           )}
         </div>
       ))}
