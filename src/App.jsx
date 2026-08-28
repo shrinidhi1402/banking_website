@@ -263,18 +263,120 @@ function LoginPage({ onLogin }) {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
 
+  // MFA State
+  const [mfaChallengeId, setMfaChallengeId] = useState(null)
+  const [otp, setOtp] = useState('')
+  const [otpSentMsg, setOtpSentMsg] = useState('')
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
       const data = await apiPost('/auth/login', { email, password })
-      onLogin({ access_token: data.access_token, user: data.user })
+      if (data.mfa_required) {
+        setMfaChallengeId(data.challenge_id)
+        setOtpSentMsg('We sent a 6-digit verification code to your email.')
+      } else {
+        onLogin({ access_token: data.access_token, user: data.user })
+      }
     } catch (err) {
       setError(err.message ?? 'Login failed')
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleVerifyOtp(e) {
+    e.preventDefault()
+    setError('')
+    setOtpSentMsg('')
+    setLoading(true)
+    try {
+      const data = await apiPost('/auth/verify-otp', { email, password, challenge_id: mfaChallengeId, otp })
+      // On success, clear password from state
+      setPassword('')
+      onLogin({ access_token: data.access_token, user: data.user })
+    } catch (err) {
+      setError(err.message ?? 'Verification failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleResendOtp() {
+    setError('')
+    setLoading(true)
+    try {
+      const data = await apiPost('/auth/resend-otp', { email, challenge_id: mfaChallengeId })
+      setMfaChallengeId(data.challenge_id)
+      setOtpSentMsg('A new verification code has been sent to your email.')
+    } catch (err) {
+      setError(err.message ?? 'Failed to resend code')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (mfaChallengeId) {
+    return (
+      <div className="login-shell">
+        <div className="login-card">
+          <div className="login-brand">
+            <span className="brand-mark">N</span>
+            <span className="login-brand-name">northstar<span className="brand-dot">.</span></span>
+          </div>
+          <h1 className="login-title">Verify your identity</h1>
+          <p className="login-subtitle">{otpSentMsg || 'Enter your 6-digit verification code'}</p>
+
+          <form className="login-form" onSubmit={handleVerifyOtp} noValidate>
+            <div className="form-field">
+              <label htmlFor="otp-input">Verification Code</label>
+              <input
+                id="otp-input"
+                className="text-input"
+                type="text"
+                autoComplete="one-time-code"
+                required
+                maxLength={6}
+                placeholder="123456"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+              />
+            </div>
+
+            {error && <div className="login-error" role="alert">{error}</div>}
+
+            <button
+              className="primary-button login-submit"
+              type="submit"
+              disabled={loading || otp.length < 6}
+            >
+              {loading ? 'Verifying\u2026' : 'Verify'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ marginTop: '12px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}
+              onClick={handleResendOtp}
+              disabled={loading}
+            >
+              Resend code
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              style={{ marginTop: '16px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}
+              onClick={() => { setMfaChallengeId(null); setOtp(''); setError(''); setPassword(''); }}
+              disabled={loading}
+            >
+              Back to login
+            </button>
+          </form>
+          <p className="login-footer">Protected by Northstar Secure&trade;</p>
+        </div>
+      </div>
+    )
   }
 
   return (

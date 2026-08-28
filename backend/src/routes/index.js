@@ -6,6 +6,8 @@ import * as ops from '../controllers/operationsController.js'
 
 const router = Router()
 router.post('/auth/login', auth.login)
+router.post('/auth/verify-otp', auth.verifyOtp)
+router.post('/auth/resend-otp', auth.resendOtp)
 router.use(authenticate)
 router.post('/auth/logout', auth.logout)
 router.get('/auth/me', auth.me)
