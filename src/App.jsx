@@ -66,10 +66,20 @@ function toRoleKey(dbRole) {
   return dbRole.charAt(0).toUpperCase() + dbRole.slice(1).toLowerCase()
 }
 
-const transactions = [['Whole Foods Market', 'Groceries - Today, 10:42 AM', '-$86.24', 'debit'], ['Acme Studio LLC', 'Incoming transfer - Yesterday', '+$3,200.00', 'credit'], ['Netflix.com', 'Subscription - Aug 21', '-$15.49', 'debit'], ['Cedar & Stone', 'Dining - Aug 20', '-$64.80', 'debit'], ['Direct deposit', 'Payroll - Aug 18', '+$4,850.00', 'credit']]
-const customers  = [['Olivia Bennett', '4821', '$18,420.65', 'Active'], ['Noah Williams', '1093', '$42,106.20', 'Active'], ['Ethan Caldwell', '7738', '$8,930.10', 'Review'], ['Sophia Davis', '6204', '$65,240.00', 'Active']]
+const transactions = [['Whole Foods Market', 'Groceries - Today, 10:42 AM', '-₹86.24', 'debit'], ['Acme Studio LLC', 'Incoming transfer - Yesterday', '+₹3,200.00', 'credit'], ['Netflix.com', 'Subscription - Aug 21', '-₹15.49', 'debit'], ['Cedar & Stone', 'Dining - Aug 20', '-₹64.80', 'debit'], ['Direct deposit', 'Payroll - Aug 18', '+₹4,850.00', 'credit']]
+const customers  = [['Olivia Bennett', '4821', '₹18,420.65', 'Active'], ['Noah Williams', '1093', '₹42,106.20', 'Active'], ['Ethan Caldwell', '7738', '₹8,930.10', 'Review'], ['Sophia Davis', '6204', '₹65,240.00', 'Active']]
 
 function Icon({ children }) { return <span className="icon" aria-hidden="true">{children}</span> }
+
+function formatINR(val) {
+  if (val === undefined || val === null || isNaN(val)) return '₹0.00'
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(val)
+}
 
 // ─── App root ─────────────────────────────────────────────────────────────────
 export default function App() {
@@ -442,7 +452,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
 
   if (roleKey === 'Customer' && customerData && !customerData.loading && customerData.account) {
     const acc = customerData.account
-    const bal = '$' + Number(acc.balance).toLocaleString(undefined, { minimumFractionDigits: 2 })
+    const bal = formatINR(acc.balance)
     displayMetrics = [
       ['Available balance', bal, 'Account ' + acc.account_number.slice(-4)],
       ['Account status', acc.status, 'Active'],
@@ -453,7 +463,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
       return [
         tx.description || tx.transaction_type,
         `${tx.transaction_type} - ${new Date(tx.created_at).toLocaleDateString()}`,
-        (isDebit ? '-' : '+') + '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
+        (isDebit ? '-' : '+') + formatINR(Math.abs(tx.amount)),
         isDebit ? 'debit' : 'credit'
       ]
     })
@@ -469,7 +479,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
       return [
         tx.description || tx.transaction_type,
         `${tx.transaction_type} - ${new Date(tx.created_at).toLocaleDateString()}`,
-        '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
+        formatINR(Math.abs(tx.amount)),
         'credit'
       ]
     })
@@ -478,16 +488,16 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
       const t = managerData.reports.totals
       displayMetrics = [
         ['Total customers',     t.customers.toLocaleString(),                                    'All registered customers'],
-        ['Total deposits',      '$' + Number(t.deposits).toLocaleString(undefined, { maximumFractionDigits: 0 }), 'Across all accounts'],
+        ['Total deposits',      new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(t.deposits), 'Across all accounts'],
         ['Transactions',        t.transactions.toLocaleString(),                                 'All time'],
         ['Suspicious activity', t.suspiciousTransactions.toString(),                             t.suspiciousTransactions > 0 ? `${t.suspiciousTransactions} need review` : 'None flagged'],
       ]
     } else {
       displayMetrics = [
-        ['Total customers',     '\u2014', 'Loading\u2026'],
-        ['Total deposits',      '\u2014', 'Loading\u2026'],
-        ['Transactions',        '\u2014', 'Loading\u2026'],
-        ['Suspicious activity', '\u2014', 'Loading\u2026'],
+        ['Total customers',     '—', 'Loading…'],
+        ['Total deposits',      '—', 'Loading…'],
+        ['Transactions',        '—', 'Loading…'],
+        ['Suspicious activity', '—', 'Loading…'],
       ]
     }
     displayTransactions = (managerData?.transactions || []).slice(0, 5).map(tx => {
@@ -496,7 +506,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
       return [
         tx.description || tx.transaction_type,
         `${senderName} \u2192 ${receiverName} \u00b7 ${new Date(tx.created_at).toLocaleDateString()}`,
-        '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
+        formatINR(Math.abs(tx.amount)),
         (tx.amount >= 10000) ? 'debit' : 'credit'
       ]
     })
@@ -529,7 +539,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
             <span><i className="legend-spend" />Spending</span>
           </div>
           <div className="chart">
-            <div className="y-labels"><span>$6k</span><span>$4k</span><span>$2k</span><span>$0</span></div>
+            <div className="y-labels"><span>₹6k</span><span>₹4k</span><span>₹2k</span><span>₹0</span></div>
             <div className="chart-area">
               <div className="grid-lines"><i /><i /><i /><i /></div>
               <svg viewBox="0 0 650 190" preserveAspectRatio="none" aria-label="Cash flow chart">
@@ -570,10 +580,10 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
             <thead><tr><th>{roleKey === 'Customer' ? 'PAYEE' : 'CUSTOMER'}</th><th>DATE</th><th>{roleKey === 'Manager' ? 'TYPE' : 'AMOUNT'}</th><th>STATUS</th><th /></tr></thead>
             <tbody>
               {(roleKey === 'Customer'
-                ? [['Adobe Creative Cloud', 'Aug 28', '$59.99', 'Scheduled'], ['Rent payment', 'Sep 01', '$1,850.00', 'Scheduled'], ['Electric company', 'Sep 03', '$124.70', 'Scheduled']]
+                ? [['Adobe Creative Cloud', 'Aug 28', '₹59.99', 'Scheduled'], ['Rent payment', 'Sep 01', '₹1,850.00', 'Scheduled'], ['Electric company', 'Sep 03', '₹124.70', 'Scheduled']]
                 : roleKey === 'Manager'
                   ? (managerData?.requests || []).filter(r => r.status === 'PENDING').slice(0, 3).map(r => [r.users?.name || 'Customer', new Date(r.created_at).toLocaleDateString(), r.request_type || '—', r.status])
-                  : customers.slice(0, 3).map((c, index) => [c[0], index === 0 ? 'Account review' : 'Transfer request', index === 0 ? '$3,200.00' : '$850.00', c[3]])
+                  : customers.slice(0, 3).map((c, index) => [c[0], index === 0 ? 'Account review' : 'Transfer request', index === 0 ? '₹3,200.00' : '₹850.00', c[3]])
               ).map((row, rowIdx) => (
                 <tr key={row[0] + rowIdx}>
                   {row.map((cell, index) => (
@@ -652,8 +662,8 @@ function TransferForm({ action, customerData, session, refresh }) {
 
   const account = customerData?.account
   const beneficiaries = customerData?.beneficiaries || []
-  const bal = account ? '$' + Number(account.balance).toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''
-  const accNum = account ? '\u2022\u2022 ' + account.account_number.slice(-4) : '\u2022\u2022'
+  const bal = account ? formatINR(account.balance) : ''
+  const accNum = account ? '•• ' + account.account_number.slice(-4) : '••'
 
   const handleSubmit = async () => {
     if (!amount || !toBeneficiaryId) {
@@ -678,23 +688,23 @@ function TransferForm({ action, customerData, session, refresh }) {
 
   return (
     <div className="form-panel">
-      <div className="form-field"><label>From account</label><div className="fake-input"><span className="account-chip">\u2022\u2022</span><span>Everyday account <small>{accNum} \u00b7 {bal}</small></span><b>\u2304</b></div></div>
+      <div className="form-field"><label>From account</label><div className="fake-input"><span className="account-chip">••</span><span>Everyday account <small>{accNum} • {bal}</small></span><b>⌄</b></div></div>
       <div className="form-field">
         <label>To beneficiary</label>
         <select className="text-input" value={toBeneficiaryId} onChange={(e) => setToBeneficiaryId(e.target.value)}>
           <option value="">Select a beneficiary</option>
           {beneficiaries.map(b => (
-            <option key={b.id} value={b.id}>{b.beneficiary_name} (\u2022\u2022 {b.account_number.slice(-4)})</option>
+            <option key={b.id} value={b.id}>{b.beneficiary_name} (•• {b.account_number.slice(-4)})</option>
           ))}
         </select>
       </div>
       <div className="form-row">
-        <div className="form-field"><label>Amount</label><div className="amount-input"><span>$</span><input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} /></div></div>
-        <div className="form-field"><label>When</label><div className="fake-input compact">Today <b>\u2304</b></div></div>
+        <div className="form-field"><label>Amount</label><div className="amount-input"><span>₹</span><input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} /></div></div>
+        <div className="form-field"><label>When</label><div className="fake-input compact">Today <b>⌄</b></div></div>
       </div>
       <div className="form-field"><label>Reference <small>(optional)</small></label><input className="text-input" placeholder="What is this for?" value={reference} onChange={e => setReference(e.target.value)} /></div>
       {error && <div className="login-error">{error}</div>}
-      <div className="form-footer"><span>Transfers are protected by Northstar Secure.</span><button className="primary-button" onClick={handleSubmit} disabled={loading}>{loading ? 'Processing...' : 'Continue \u2192'}</button></div>
+      <div className="form-footer"><span>Transfers are protected by Northstar Secure.</span><button className="primary-button" onClick={handleSubmit} disabled={loading}>{loading ? 'Processing...' : 'Continue →'}</button></div>
     </div>
   )
 }
@@ -715,8 +725,8 @@ function TransactionsPanel({ action, customerData }) {
           <div className="generic-row" key={tx.id}>
             <span className={`transaction-icon ${isDebit ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
             <div><b>{tx.description || tx.transaction_type}</b><small>{tx.transaction_type} - {new Date(tx.created_at).toLocaleDateString()}</small></div>
-            <strong>{(isDebit ? '-' : '+') + '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-            <button className="text-button" onClick={() => action(`Opening ${tx.id}`)}>View \u2192</button>
+            <strong>{(isDebit ? '-' : '+') + formatINR(Math.abs(tx.amount))}</strong>
+            <button className="text-button" onClick={() => action(`Opening ${tx.id}`)}>View →</button>
           </div>
         )
       })}
@@ -743,12 +753,12 @@ function ManagerTransactionsPanel({ action, managerData }) {
             <span className={`transaction-icon ${(tx.amount >= 10000) ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
             <div>
               <b>{tx.description || tx.transaction_type}</b>
-              <small>{senderName} \u2192 {receiverName} \u00b7 {new Date(tx.created_at).toLocaleDateString()}</small>
+              <small>{senderName} → {receiverName} · {new Date(tx.created_at).toLocaleDateString()}</small>
             </div>
-            <strong>${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+            <strong>{formatINR(Math.abs(tx.amount))}</strong>
             <span className={`status ${(tx.status || 'completed').toLowerCase()}`}>{tx.status || 'COMPLETED'}</span>
-            {(tx.amount >= 10000) && <span className="status review" style={{marginLeft:'6px'}}>\u26a0 Suspicious</span>}
-            <button className="text-button" onClick={() => action(`Transaction ${tx.id}`)}>View \u2192</button>
+            {(tx.amount >= 10000) && <span className="status review" style={{marginLeft:'6px'}}>⚠ Suspicious</span>}
+            <button className="text-button" onClick={() => action(`Transaction ${tx.id}`)}>View →</button>
           </div>
         )
       })}
@@ -787,12 +797,12 @@ function ManagerRequestsPanel({ action, managerData, session, refreshManager }) 
         const custName = req.users?.name || 'Unknown Customer'
         return (
           <div className="generic-row" key={req.id}>
-            <span className={`transaction-icon ${req.status === 'PENDING' ? 'warning' : 'credit'}`}>\u2713</span>
+            <span className={`transaction-icon ${req.status === 'PENDING' ? 'warning' : 'credit'}`}>✓</span>
             <div>
               <b>{req.request_type}</b>
-              <small>{custName} \u00b7 {new Date(req.created_at).toLocaleDateString()}{req.description ? ` \u00b7 ${req.description}` : ''}</small>
+              <small>{custName} • {new Date(req.created_at).toLocaleDateString()}{req.description ? ` • ${req.description}` : ''}</small>
             </div>
-            <strong>{req.description || '\u2014'}</strong>
+            <strong>{req.description || '—'}</strong>
             {req.status === 'PENDING' ? (
               <div style={{display:'flex', gap:'10px'}}>
                 <button className="text-button" disabled={handling === req.id} style={{color:'var(--coral)'}} onClick={() => handleDecision(req.id, 'REJECTED')}>Reject</button>
@@ -822,14 +832,14 @@ function ManagerSecurityPanel({ action, managerData }) {
       ) : events.map(ev => (
         <div className="generic-row" key={ev.id}>
           <span className={`transaction-icon ${ev.severity === 'HIGH' ? 'debit' : ev.severity === 'MEDIUM' ? 'warning' : 'credit'}`}>
-            {ev.severity === 'HIGH' ? '!' : ev.severity === 'MEDIUM' ? '\u26a0' : '\u2713'}
+            {ev.severity === 'HIGH' ? '!' : ev.severity === 'MEDIUM' ? '⚠' : '✓'}
           </span>
           <div>
             <b>{ev.event_type}</b>
-            <small>{ev.description} \u00b7 {new Date(ev.created_at).toLocaleDateString()}{ev.ip_address ? ` \u00b7 IP: ${ev.ip_address}` : ''}</small>
+            <small>{ev.description} • {new Date(ev.created_at).toLocaleDateString()}{ev.ip_address ? ` • IP: ${ev.ip_address}` : ''}</small>
           </div>
           <span className={`status ${ev.severity === 'HIGH' ? 'review' : ev.severity === 'MEDIUM' ? 'scheduled' : 'active'}`}>{ev.severity}</span>
-          <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View \u2192</button>
+          <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View →</button>
         </div>
       ))}
     </div>
@@ -846,7 +856,7 @@ function ManagerReportsPanel({ managerData }) {
 
   const t = r.totals
   const fmt    = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })
-  const fmtCur = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const fmtCur = (n) => formatINR(n)
 
   return (
     <div>
@@ -893,9 +903,9 @@ function ManagerReportsPanel({ managerData }) {
                   <tr key={tx.id}>
                     <td>{tx.id}</td>
                     <td>{tx.transaction_type}</td>
-                    <td className="amount-cell">${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="amount-cell">{formatINR(Math.abs(tx.amount))}</td>
                     <td>{new Date(tx.created_at).toLocaleDateString()}</td>
-                    <td className="status-cell"><span className="status review">\u26a0 Suspicious</span></td>
+                    <td className="status-cell"><span className="status review">⚠ Suspicious</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -1005,7 +1015,7 @@ function BeneficiariesPanel({ action, customerData, session, refresh }) {
               {beneficiariesList.map((b) => (
                 <tr key={b.id}>
                   <td className="person-cell"><span className="avatar">{(b.beneficiary_name || '').split(' ').map((n) => n[0] || '').join('').slice(0, 2)}</span><b>{b.beneficiary_name}</b></td>
-                  <td>\u2022\u2022 {b.account_number.slice(-4)}</td>
+                  <td>•• {b.account_number.slice(-4)}</td>
                   <td>{b.bank_name}</td>
                   <td className="status-cell"><span className="status active">Active</span></td>
                   <td><button className="text-button" style={{color:'var(--coral)'}} onClick={() => handleDelete(b.id)}>Delete</button></td>
@@ -1165,7 +1175,7 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
       rows = employeeData.employees.map(e => [
         e.users?.name || `Employee ${e.user_id}`,
         e.department || 'Staff',
-        e.branch || '\u2014',
+        e.branch || '—',
         e.users?.status || 'ACTIVE'
       ])
     } else {
@@ -1232,8 +1242,8 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
       const receiverName = tx.receiver?.users?.name || 'Unknown Receiver'
       return [
         `${tx.transaction_type} - ${tx.description || 'Transfer'}`,
-        `${senderName} \u2192 ${receiverName} - ${new Date(tx.created_at).toLocaleDateString()}`,
-        '$' + Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 }),
+        `${senderName} → ${receiverName} - ${new Date(tx.created_at).toLocaleDateString()}`,
+        formatINR(Math.abs(tx.amount)),
         tx.status
       ]
     })
@@ -1277,7 +1287,7 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
       </div>
       {items.map((item, index) => (
         <div className="generic-row" key={item[0] + index}>
-          <span className={`transaction-icon ${item[3] === 'PENDING' ? 'warning' : 'credit'}`}>{active === 'Transactions' ? item[0][0] : '\u2713'}</span>
+          <span className={`transaction-icon ${item[3] === 'PENDING' ? 'warning' : 'credit'}`}>{active === 'Transactions' ? item[0][0] : '✓'}</span>
           <div><b>{item[0]}</b><small>{item[1]}</small></div>
           <strong>{item[2]}</strong>
 
@@ -1288,7 +1298,7 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
             </div>
           ) : (
             <button className="text-button" onClick={() => action(`Opening ${item[0]}`)}>
-              {active === 'Requests' ? <span className={`status ${item[3]?.toLowerCase()}`}>{item[3]}</span> : 'View \u2192'}
+              {active === 'Requests' ? <span className={`status ${item[3]?.toLowerCase()}`}>{item[3]}</span> : 'View →'}
             </button>
           )}
         </div>
