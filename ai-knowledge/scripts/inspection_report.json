@@ -1,0 +1,22 @@
+{
+  "connection": "OK",
+  "vector_extension": true,
+  "existing_vector_tables": [],
+  "schema_match": {
+    "accounts": "MATCH",
+    "audit_logs": "MATCH",
+    "beneficiaries": "MATCH",
+    "customer_profiles": "MATCH",
+    "employee_profiles": "MATCH",
+    "login_events": "MATCH",
+    "manager_profiles": "MATCH",
+    "otp_challenges": "MATCH",
+    "requests": "MATCH",
+    "security_events": "MATCH",
+    "transactions": "MATCH",
+    "users": "MATCH"
+  },
+  "extra_tables": [],
+  "missing_tables": [],
+  "discrepancies": []
+}
