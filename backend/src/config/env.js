@@ -12,6 +12,9 @@ const envSchema = z.object({
   EMAILJS_PUBLIC_KEY: z.string().min(1),
   EMAILJS_PRIVATE_KEY: z.string().min(1),
   OTP_SECRET: z.string().min(16),
+  // Optional – used ONLY by the SQL injection simulation (Phase 2 bug lab).
+  // Format: postgresql://postgres.[ref]:[password]@aws-0-region.pooler.supabase.com:5432/postgres
+  SUPABASE_DB_URL: z.string().optional(),
 })
 
 export const env = envSchema.parse(process.env)

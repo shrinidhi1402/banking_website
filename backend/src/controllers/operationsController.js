@@ -3,6 +3,7 @@ import { ApiError, assertNoDatabaseError } from '../utils/errors.js'
 import { parse, requestDecisionSchema } from '../utils/validation.js'
 import { recordAudit, recordSecurity } from '../middleware/telemetry.js'
 import { getOne, getRows, updateOne } from '../services/dataService.js'
+import { isBugEnabled } from '../config/bugFlags.js'
 import { z } from 'zod'
 
 // Shorthand: integer user id from the application users table
@@ -13,19 +14,98 @@ const list = (table, filter) => async (req, res, next) => {
 }
 
 export const employeeDashboard      = list('users', () => (q) => q.eq('role', 'CUSTOMER').select('id'))
-export const employeeCustomers      = list('customer_profiles', () => (q) => q.select('*, users!inner(id, name, email, status)').order('created_at', { ascending: false }))
+
+/**
+ * GET /api/employee/customers?search=<term>
+ *
+ * SECURE (BUG_SQLI=OFF): uses Supabase parameterized .ilike() filter.
+ * VULNERABLE (BUG_SQLI=ON): when a ?search= param is present, the search
+ *   term is directly interpolated into a PostgREST filter string with no
+ *   sanitization. Payloads like " OR role=eq.MANAGER" expose privileged
+ *   records. Logs a security event every time the vulnerability fires.
+ */
+export async function employeeCustomers(req, res, next) {
+  try {
+    const search = req.query.search
+
+    // ── PHASE 2 BUG: SQL INJECTION ─────────────────────────────────────
+    // When BUG_SQLI is ON and ?search= is provided, the value is used
+    // DIRECTLY to build a PostgREST filter without validation. An attacker
+    // (or curious employee) can enumerate all users of any role, reveal
+    // email addresses and statuses of accounts they should never see.
+    if (search && isBugEnabled('BUG_SQLI')) {
+      console.warn(`[BugLab] ⚠ SQL INJECTION ACTIVE: raw search param = "${search}"`)
+
+      // Build a dangerously permissive query using raw Supabase .or()
+      // The input is not sanitized — role/email/status filters can be injected.
+      // Example safe: search="john" -> filter on name
+      // Example attack: search=" OR role=eq.MANAGER" -> exposes all managers
+      let query = supabaseAdmin
+        .from('users')
+        .select('id, name, email, role, status, phone, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      // Vulnerable: directly apply whatever the user typed as a text search
+      // against email and name with NO input validation
+      if (search.includes('@')) {
+        // Looks like an email — search by exact email (no sanitization)
+        query = query.ilike('email', `%${search}%`)
+      } else if (search.toLowerCase().startsWith('role=') || search.toLowerCase().startsWith('status=')) {
+        // Injection detected: search is trying to filter by role/status
+        // A secure system would reject this. A vulnerable one executes it.
+        const [field, value] = search.split('=')
+        query = query.eq(field.trim(), value.trim())
+      } else {
+        // Default: name search — still no sanitization of special chars
+        query = query.ilike('name', `%${search}%`)
+      }
+
+      const { data, error } = await query
+      if (error) throw new ApiError(500, 'Database error')
+
+      // Record that the injection fired
+      await supabaseAdmin.from('security_events').insert({
+        user_id: req.auth?.profile?.id ?? null,
+        event_type: 'SQL_INJECTION_ATTEMPT',
+        severity: 'HIGH',
+        description: `Employee search endpoint received unsanitized input: "${search.slice(0, 120)}". BUG_SQLI is active — raw filter executed against users table. ${data.length} row(s) returned.`,
+        ip_address: req.ip,
+      })
+
+      return res.json(data)
+    }
+    // ── END BUG PHASE 2 (normal secure path below) ──────────────────────
+
+    // SECURE PATH: parameterized ilike filter
+    let q = supabaseAdmin
+      .from('customer_profiles')
+      .select('*, users!inner(id, name, email, status)')
+      .order('created_at', { ascending: false })
+
+    if (search) {
+      q = q.or(`users.name.ilike.%${search}%,users.email.ilike.%${search}%`)
+    }
+
+    const { data, error } = await q
+    if (error) throw new ApiError(500, 'Database error')
+    res.json(data)
+  } catch (e) { next(e) }
+}
+
+export const managerCustomers       = employeeCustomers
 export const employeeCustomer       = (req, res, next) => {
   return getOne('customer_profiles', (q) => q.select('*, users!inner(id, name, email, status, phone)').eq('id', req.params.id))
     .then(data => res.json(data)).catch(next)
 }
-export const employeeTransactions   = list('transactions', () => (q) => q.select('*, sender:accounts!sender_account_id(account_number, users(name)), receiver:accounts!receiver_account_id(account_number, users(name))').order('created_at', { ascending: false }))
-export const employeeRequests       = list('requests', () => (q) => q.select('*, users!requests_user_id_fkey(id, name, email)').order('created_at', { ascending: false }))
-export const managerCustomers       = employeeCustomers
 export const managerCustomer        = employeeCustomer
+export const employeeTransactions   = list('transactions', () => (q) => q.select('*, sender:accounts!sender_account_id(account_number, users(name)), receiver:accounts!receiver_account_id(account_number, users(name)))').order('created_at', { ascending: false }))
+export const employeeRequests       = list('requests', () => (q) => q.select('*, users!requests_user_id_fkey(id, name, email)').order('created_at', { ascending: false }))
 export const managerEmployees       = list('employee_profiles', () => (q) => q.select('*, users!inner(id, name, email, status, role)').order('created_at', { ascending: false }))
 export const managerTransactions    = employeeTransactions
 export const managerRequests        = employeeRequests
 export const securityEvents         = list('security_events', () => (q) => q.order('created_at', { ascending: false }))
+
 
 export const employeeProfile = (req, res) => res.json(req.auth.profile)
 export const managerProfile = async (req, res, next) => {

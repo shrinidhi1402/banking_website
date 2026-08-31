@@ -4,6 +4,7 @@ import { ApiError, assertNoDatabaseError } from '../utils/errors.js'
 import { beneficiarySchema, parse, transferSchema } from '../utils/validation.js'
 import { recordAudit, recordSecurity } from '../middleware/telemetry.js'
 import { getOne, getRows } from '../services/dataService.js'
+import { isBugEnabled } from '../config/bugFlags.js'
 
 // Shorthand: integer user id from the application users table
 const uid = (req) => req.auth.profile.id
@@ -23,11 +24,44 @@ export async function updateProfile(req, res, next) {
 }
 
 export async function account(req, res, next) {
-  try { const rows = await getRows('accounts', (q) => q.eq('user_id', uid(req))); res.json(rows) } catch (e) { next(e) }
+  try {
+    // ── PHASE 3 BUG: IDOR ─────────────────────────────────────────────────
+    // When BUG_IDOR is ON, account_id from query param is used directly
+    // WITHOUT verifying it belongs to the authenticated user. Any customer
+    // can pass ?account_id=X to fetch any other customer's account.
+    if (isBugEnabled('BUG_IDOR') && req.query.account_id) {
+      const id = parseInt(req.query.account_id, 10)
+      if (isNaN(id)) throw new ApiError(400, 'account_id must be a valid integer')
+      console.warn(`[BugLab] ⚠ IDOR ACTIVE: user ${uid(req)} accessing account ${id} (no ownership check)`)
+      const { data, error } = await supabaseAdmin.from('accounts').select('*').eq('id', id).single()
+      if (error?.code === 'PGRST116' || !data) throw new ApiError(404, 'Account not found')
+      assertNoDatabaseError(error, 'Failed to fetch account')
+      return res.json([{ ...data, _bug: 'IDOR_VULNERABILITY_ACTIVE' }])
+    }
+    // ── END BUG PHASE 3 (normal secure path below) ──────────────────────
+    const rows = await getRows('accounts', (q) => q.eq('user_id', uid(req)))
+    res.json(rows)
+  } catch (e) { next(e) }
 }
 
 export async function transactions(req, res, next) {
   try {
+    // ── PHASE 3 BUG: IDOR ─────────────────────────────────────────────────
+    // When BUG_IDOR is ON and ?account_id= is provided, transactions are
+    // returned for ANY account without verifying ownership.
+    if (isBugEnabled('BUG_IDOR') && req.query.account_id) {
+      const id = parseInt(req.query.account_id, 10)
+      if (isNaN(id)) throw new ApiError(400, 'account_id must be a valid integer')
+      console.warn(`[BugLab] ⚠ IDOR ACTIVE: user ${uid(req)} reading transactions for account ${id}`)
+      const { data, error } = await supabaseAdmin
+        .from('transactions')
+        .select('*')
+        .or(`sender_account_id.eq.${id},receiver_account_id.eq.${id}`)
+        .order('created_at', { ascending: false })
+      assertNoDatabaseError(error, 'Failed to fetch transactions')
+      return res.json(data || [])
+    }
+    // ── END BUG PHASE 3 (normal secure path below) ──────────────────────
     const accountIds = await getAccountIds(uid(req))
     if (!accountIds.length) return res.json([])
     const rows = await getRows('transactions', (q) =>

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import crypto from 'crypto'
 import { env } from '../config/env.js'
 import { sendOtpEmail } from '../services/emailService.js'
+import { isBugEnabled } from '../config/bugFlags.js'
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -45,11 +46,6 @@ export async function login(req, res, next) {
       throw new ApiError(401, 'Invalid email or password')
     }
 
-    // Step 3: Immediately invalidate the temporary Supabase session
-    // Note: While this signs out the user on the backend, the JWT access_token itself 
-    // remains cryptographically valid until expiry. We NEVER return it to the frontend here.
-    await supabaseAdmin.auth.admin.signOut(data.session.access_token)
-
     // Step 4: find application profile by verified email (NOT by auth UUID)
     const email = data.user.email
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -59,11 +55,13 @@ export async function login(req, res, next) {
       .single()
 
     if (profileError || !profile) {
+      await supabaseAdmin.auth.admin.signOut(data.session.access_token)
       await recordLogin({ success: false, req, reason: 'No application profile for this account' })
       throw new ApiError(403, 'No application profile is associated with this account')
     }
 
     if (profile.status === 'LOCKED') {
+      await supabaseAdmin.auth.admin.signOut(data.session.access_token)
       await recordLogin({ userId: profile.id, success: false, req, reason: 'Account locked' })
       const { error: secErr } = await supabaseAdmin.from('security_events').insert({
         user_id: profile.id, event_type: 'SUSPICIOUS_LOGIN', severity: 'HIGH',
@@ -73,9 +71,46 @@ export async function login(req, res, next) {
       throw new ApiError(403, 'Account is locked. Contact your administrator.')
     }
     if (profile.status === 'INACTIVE') {
+      await supabaseAdmin.auth.admin.signOut(data.session.access_token)
       await recordLogin({ userId: profile.id, success: false, req, reason: 'Account inactive' })
       throw new ApiError(403, 'Account is inactive.')
     }
+
+    // ── PHASE 1 BUG: MFA Bypass ───────────────────────────────────────────────
+    // When BUG_MFA is ON, the OTP step is skipped entirely. The session that
+    // Supabase just issued is returned directly to the caller — no email sent,
+    // no challenge created. This simulates an employee account with MFA disabled.
+    if (isBugEnabled('BUG_MFA')) {
+      console.warn(`[BugLab] ⚠ MFA BYPASS ACTIVE: Skipping OTP for ${email} (BUG_MFA=ON)`)
+
+      // Record the bypass as a critical security event
+      await supabaseAdmin.from('security_events').insert({
+        user_id: profile.id,
+        event_type: 'MFA_BYPASSED',
+        severity: 'CRITICAL',
+        description: `MFA step skipped for ${email} (role: ${profile.role}). Account accessed without OTP verification. Vulnerability: BUG_MFA is enabled.`,
+        ip_address: req.ip,
+      })
+
+      await recordLogin({ userId: profile.id, success: true, req })
+
+      // Return the live session directly — MFA completely bypassed
+      return res.json({
+        mfa_required: false,
+        mfa_bypassed: true,
+        bug_active: 'BUG_MFA',
+        access_token:  data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at:    data.session.expires_at,
+        user: profile,
+      })
+    }
+    // ── END BUG PHASE 1 ───────────────────────────────────────────────────────
+
+    // Step 3 (normal path): Immediately invalidate the temporary Supabase session
+    // Note: While this signs out the user on the backend, the JWT access_token itself 
+    // remains cryptographically valid until expiry. We NEVER return it to the frontend here.
+    await supabaseAdmin.auth.admin.signOut(data.session.access_token)
 
     // Step 5: Generate secure 6-digit OTP
     const otp = crypto.randomInt(100000, 1000000).toString()

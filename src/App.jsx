@@ -246,17 +246,19 @@ export default function App() {
 
         <div className="content-wrap">
           {notice && <div className="toast"><span>✓</span>{notice}</div>}
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">{roleKey} workspace</p>
-              <h1>{active === 'Overview' ? `Good morning, ${userName.split(' ')[0]}.` : active}</h1>
-              <p className="subheading">Here is what is happening with your accounts today.</p>
+          {active !== 'Bug Lab' && (
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">{roleKey} workspace</p>
+                <h1>{active === 'Overview' ? `Good morning, ${userName.split(' ')[0]}.` : active}</h1>
+                <p className="subheading">Here is what is happening with your accounts today.</p>
+              </div>
+              <div className="heading-actions">
+                <button className="secondary-button" onClick={() => action('Statement export is ready to download')}><Icon>⇩</Icon> Export</button>
+                {roleKey === 'Customer' && <button className="primary-button" onClick={() => setActive('Transfer money')}><Icon>↗</Icon> Transfer money</button>}
+              </div>
             </div>
-            <div className="heading-actions">
-              <button className="secondary-button" onClick={() => action('Statement export is ready to download')}><Icon>⇩</Icon> Export</button>
-              {roleKey === 'Customer' && <button className="primary-button" onClick={() => setActive('Transfer money')}><Icon>↗</Icon> Transfer money</button>}
-            </div>
-          </div>
+          )}
           {active === 'Overview'
             ? <Dashboard roleKey={roleKey} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} />
             : <WorkspacePage active={active} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} session={session} refresh={refreshCustomerData} refreshEmployee={refreshEmployeeData} refreshManager={refreshManagerData} />}
@@ -287,6 +289,10 @@ function LoginPage({ onLogin }) {
       if (data.mfa_required) {
         setMfaChallengeId(data.challenge_id)
         setOtpSentMsg('We sent a 6-digit verification code to your email.')
+      } else if (data.mfa_bypassed) {
+        // BUG_MFA is active — OTP was skipped, session returned directly
+        setError('')
+        onLogin({ access_token: data.access_token, user: data.user, mfa_bypassed: true })
       } else {
         onLogin({ access_token: data.access_token, user: data.user })
       }
@@ -637,18 +643,24 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
   else if (active === 'Profile'    && isCust)            Content = <ProfileForm action={action} customerData={customerData} session={session} refresh={refresh} />
   else if (active === 'Profile'    && isEmp)             Content = <ProfileForm action={action} employeeData={employeeData} session={session} refresh={refreshEmployee} />
   else if (active === 'Profile'    && isMgr)             Content = <ManagerProfileForm action={action} managerData={managerData} session={session} refresh={refreshManager} />
-  else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} />
+  else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} />
   else if (active === 'Security')                        Content = <PasswordForm action={action} session={session} />
   else if (active === 'Reports'    && isMgr)             Content = <ManagerReportsPanel action={action} managerData={managerData} />
   else Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
 
   return (
     <section className="workspace-page">
-      <div className="page-intro">
-        <div className="large-symbol">{active === 'Transfer money' ? '↗' : active === 'Security' ? '◈' : active === 'Reports' ? '▥' : '✦'}</div>
-        <div><h2>{title}</h2><p>{description}</p></div>
-      </div>
-      {Content}
+      {active === 'Bug Lab' ? (
+        Content
+      ) : (
+        <>
+          <div className="page-intro">
+            <div className="large-symbol">{active === 'Transfer money' ? '↗' : active === 'Security' ? '◈' : active === 'Reports' ? '▥' : '✦'}</div>
+            <div><h2>{title}</h2><p>{description}</p></div>
+          </div>
+          {Content}
+        </>
+      )}
     </section>
   )
 }
@@ -819,29 +831,147 @@ function ManagerRequestsPanel({ action, managerData, session, refreshManager }) 
 }
 
 // ─── Manager Security Panel ───────────────────────────────────────────────────
-function ManagerSecurityPanel({ action, managerData }) {
+// Shows the live security event log AND the vulnerability control toggles.
+function ManagerSecurityPanel({ action, managerData, session, refreshManager }) {
   const events = managerData?.securityEvents || []
+  const token = session?.access_token
+
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false })
+  const [flagsLoaded, setFlagsLoaded] = useState(false)
+  const [toggling, setToggling] = useState(null)
+
+  useEffect(() => {
+    if (!token) return
+    apiGet('/bugs/flags', token)
+      .then(d => { setFlags(d.flags); setFlagsLoaded(true) })
+      .catch(() => setFlagsLoaded(true))
+  }, [token])
+
+  async function handleToggle(flag) {
+    setToggling(flag)
+    try {
+      const d = await apiPost('/bugs/toggle', { flag }, token)
+      setFlags(d.flags)
+      // Refresh security events so new events from the toggle appear
+      if (refreshManager) await refreshManager()
+      action(`Vulnerability ${flag} ${d.enabled ? 'activated' : 'deactivated'}`)
+    } catch (e) {
+      action(e.message || 'Failed to toggle')
+    } finally {
+      setToggling(null)
+    }
+  }
+
+  const vulnMeta = [
+    { flag: 'BUG_MFA',  label: 'MFA Bypass',          risk: 'CRITICAL', cwe: 'CWE-308', detail: 'Disables OTP step on login. All accounts become single-factor.' },
+    { flag: 'BUG_SQLI', label: 'SQL Injection',        risk: 'HIGH',     cwe: 'CWE-89',  detail: 'Customer search accepts unsanitized input. Filter injection possible.' },
+    { flag: 'BUG_IDOR', label: 'Broken Access Control',risk: 'HIGH',     cwe: 'CWE-639', detail: 'Account endpoint skips ownership check. Any account ID accessible.' },
+  ]
+  const riskCol = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
+
   return (
-    <div className="panel generic-panel">
-      <div className="directory-toolbar">
-        <div className="search"><span>⌕</span><input placeholder="Search security events..." /></div>
-        <button className="select-button">All severities ⌄</button>
-      </div>
-      {events.length === 0 ? (
-        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No security events found.</div>
-      ) : events.map(ev => (
-        <div className="generic-row" key={ev.id}>
-          <span className={`transaction-icon ${ev.severity === 'HIGH' ? 'debit' : ev.severity === 'MEDIUM' ? 'warning' : 'credit'}`}>
-            {ev.severity === 'HIGH' ? '!' : ev.severity === 'MEDIUM' ? '⚠' : '✓'}
-          </span>
+    <div>
+      {/* Vulnerability Control Panel */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0f1923, #1a2332)',
+        borderRadius: '14px',
+        padding: '22px 26px',
+        marginBottom: '22px',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
+          <div style={{ fontSize: '18px' }}>🛡️</div>
           <div>
-            <b>{ev.event_type}</b>
-            <small>{ev.description} • {new Date(ev.created_at).toLocaleDateString()}{ev.ip_address ? ` • IP: ${ev.ip_address}` : ''}</small>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: '15px' }}>Vulnerability Controls</div>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '1px' }}>Risk Assessment Platform · Activate to simulate real attack surface</div>
           </div>
-          <span className={`status ${ev.severity === 'HIGH' ? 'review' : ev.severity === 'MEDIUM' ? 'scheduled' : 'active'}`}>{ev.severity}</span>
-          <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View →</button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR].filter(Boolean).length > 0 && (
+              <span style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', color: '#ff4757', fontSize: '11px', fontWeight: 700 }}>
+                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR].filter(Boolean).length} ACTIVE
+              </span>
+            )}
+          </div>
         </div>
-      ))}
+        {!flagsLoaded ? (
+          <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px' }}>Loading controls...</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {vulnMeta.map(v => (
+              <div key={v.flag} style={{
+                display: 'flex', alignItems: 'center', gap: '14px',
+                padding: '12px 16px', borderRadius: '10px',
+                background: flags[v.flag] ? 'rgba(255,71,87,0.1)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${flags[v.flag] ? 'rgba(255,71,87,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                transition: 'all 0.25s',
+              }}>
+                {/* Status dot */}
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+                  background: flags[v.flag] ? '#ff4757' : '#2ed573',
+                  boxShadow: `0 0 6px ${flags[v.flag] ? '#ff4757' : '#2ed573'}`,
+                }} />
+                {/* Labels */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#e8edf2', fontWeight: 600, fontSize: '13px' }}>{v.label}</span>
+                    <span style={{ padding: '2px 6px', borderRadius: '5px', fontSize: '10px', fontWeight: 700,
+                      background: `${riskCol[v.risk]}22`, color: riskCol[v.risk] }}>{v.risk}</span>
+                    <span style={{ padding: '2px 6px', borderRadius: '5px', fontSize: '10px',
+                      background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>{v.cwe}</span>
+                  </div>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11.5px', marginTop: '2px' }}>{v.detail}</div>
+                </div>
+                {/* Toggle */}
+                <button
+                  onClick={() => handleToggle(v.flag)}
+                  disabled={toggling === v.flag}
+                  style={{
+                    position: 'relative', width: '46px', height: '24px',
+                    borderRadius: '12px', border: 'none', cursor: 'pointer',
+                    background: flags[v.flag] ? '#ff4757' : 'rgba(255,255,255,0.12)',
+                    transition: 'background 0.25s', flexShrink: 0, padding: 0,
+                  }}
+                  title={flags[v.flag] ? 'Click to deactivate' : 'Click to activate'}
+                >
+                  <div style={{
+                    position: 'absolute', top: '3px',
+                    left: flags[v.flag] ? '25px' : '3px',
+                    width: '18px', height: '18px', borderRadius: '50%',
+                    background: '#fff', transition: 'left 0.25s',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                  }} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: '14px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', fontSize: '11px', color: 'rgba(255,255,255,0.3)', lineHeight: 1.5 }}>
+          All flags reset to OFF on server restart. Events from active vulnerabilities are logged below in real time.
+        </div>
+      </div>
+
+      {/* Live Security Event Log */}
+      <div className="panel generic-panel">
+        <div className="directory-toolbar">
+          <div className="search"><span>⌕</span><input placeholder="Search security events..." /></div>
+          <button className="select-button">All severities ⌄</button>
+        </div>
+        {events.length === 0 ? (
+          <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No security events found.</div>
+        ) : events.map(ev => (
+          <div className="generic-row" key={ev.id}>
+            <span className={`transaction-icon ${ev.severity === 'CRITICAL' || ev.severity === 'HIGH' ? 'debit' : ev.severity === 'MEDIUM' ? 'warning' : 'credit'}`}>
+              {ev.severity === 'CRITICAL' ? '!!' : ev.severity === 'HIGH' ? '!' : ev.severity === 'MEDIUM' ? '⚠' : '✓'}
+            </span>
+            <div>
+              <b>{ev.event_type}</b>
+              <small>{ev.description} • {new Date(ev.created_at).toLocaleString()}{ev.ip_address ? ` • IP: ${ev.ip_address}` : ''}</small>
+            </div>
+            <span className={`status ${ev.severity === 'CRITICAL' || ev.severity === 'HIGH' ? 'review' : ev.severity === 'MEDIUM' ? 'scheduled' : 'active'}`}>{ev.severity}</span>
+            <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View →</button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1167,10 +1297,12 @@ function NewCustomerForm({ onCancel, onSuccess, session, action }) {
 
 function Directory({ active, action, employeeData, session, refreshEmployee, isMgr }) {
   const [showAdd, setShowAdd] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [searching, setSearching] = useState(false)
   let rows = customers
 
   if (active === 'Employees') {
-    // Real employee data (passed as employeeData for manager)
     if (employeeData?.employees && employeeData.employees.length > 0) {
       rows = employeeData.employees.map(e => [
         e.users?.name || `Employee ${e.user_id}`,
@@ -1183,11 +1315,38 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
     }
   } else if (active === 'Customers' && employeeData?.customers) {
     rows = employeeData.customers.map(c => [
-      c.users?.name || 'Unknown',
-      c.customer_id,
+      c.users?.name || c.name || 'Unknown',
+      c.customer_id || c.email || '',
       'Northstar Secure',
-      c.users?.status || 'Active'
+      c.users?.status || c.status || 'Active'
     ])
+  }
+
+  // If search results exist, display them instead (may include injection results)
+  const displayRows = searchResults !== null ? searchResults : rows
+
+  async function handleSearch(e) {
+    const val = e.target.value
+    setSearchQuery(val)
+    if (!val.trim()) { setSearchResults(null); return }
+    setSearching(true)
+    try {
+      const token = session?.access_token
+      const endpoint = isMgr ? '/manager/customers' : '/employee/customers'
+      const data = await apiGet(`${endpoint}?search=${encodeURIComponent(val)}`, token)
+      // Data could be customer_profiles (normal) or raw users (injected) — display whatever came back
+      const normalized = Array.isArray(data) ? data.map(r => [
+        r.users?.name || r.name || 'Unknown',
+        r.customer_id || r.email || r.id || '',
+        r.role || 'Northstar Secure',
+        r.users?.status || r.status || 'Active'
+      ]) : []
+      setSearchResults(normalized)
+    } catch {
+      setSearchResults(null)
+    } finally {
+      setSearching(false)
+    }
   }
 
   return (
@@ -1202,7 +1361,15 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
       )}
       <div className="panel directory-panel">
         <div className="directory-toolbar">
-          <div className="search"><span>⌕</span><input placeholder={`Search ${active.toLowerCase()}...`} /></div>
+          <div className="search">
+            <span>⌕</span>
+            <input
+              placeholder={`Search ${active.toLowerCase()}...`}
+              value={searchQuery}
+              onChange={handleSearch}
+            />
+            {searching && <span style={{ fontSize: '11px', color: '#9aa5b5', marginLeft: '6px' }}>Searching...</span>}
+          </div>
           {!isMgr && (
             <button className="primary-button" onClick={() => {
               if (active === 'Customers') setShowAdd(!showAdd)
@@ -1214,7 +1381,7 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
           <table>
             <thead><tr><th>NAME</th><th>{active === 'Employees' ? 'DEPARTMENT' : 'CUSTOMER ID'}</th><th>{active === 'Employees' ? 'BRANCH' : 'PLAN'}</th><th>STATUS</th><th /></tr></thead>
             <tbody>
-              {rows.map((row, rIdx) => (
+              {displayRows.map((row, rIdx) => (
                 <tr key={row[0] + rIdx}>
                   <td className="person-cell"><span className="avatar">{(row[0]||'').split(' ').map((n) => n[0]).join('')}</span><b>{row[0]}</b></td>
                   {row.slice(1).map((cell, index) => (
@@ -1225,7 +1392,7 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
                   <td><button className="more-button" onClick={() => action(`Opening ${row[0]}`)}>•••</button></td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'20px', color:'#9aa5b5'}}>No {active.toLowerCase()} found.</td></tr>}
+              {displayRows.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'20px', color:'#9aa5b5'}}>No {active.toLowerCase()} found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1304,6 +1471,537 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
         </div>
       ))}
       {items.length === 0 && <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No {active.toLowerCase()} found.</div>}
+    </div>
+  )
+}
+
+// ─── Bug Lab Panel ─────────────────────────────────────────────────────────────
+// Phase 1 + 2 + 3 vulnerability simulation controls. MANAGER ONLY.
+function BugLabPanel({ session, action }) {
+  const token = session?.access_token
+
+  // Flags state
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false })
+  const [flagsLoading, setFlagsLoading] = useState(true)
+
+  // Phase 1 state
+  const [mfaTarget, setMfaTarget] = useState('')
+  const [mfaResult, setMfaResult] = useState(null)
+  const [mfaLoading, setMfaLoading] = useState(false)
+  const [mfaError, setMfaError] = useState('')
+
+  // Phase 2 state
+  const [sqliQuery, setSqliQuery] = useState('')
+  const [sqliResult, setSqliResult] = useState(null)
+  const [sqliLoading, setSqliLoading] = useState(false)
+  const [sqliError, setSqliError] = useState('')
+
+  // Phase 3 state
+  const [idorAccountId, setIdorAccountId] = useState('')
+  const [idorResult, setIdorResult] = useState(null)
+  const [idorLoading, setIdorLoading] = useState(false)
+  const [idorError, setIdorError] = useState('')
+  const [idorAccounts, setIdorAccounts] = useState(null)
+  const [idorListLoading, setIdorListLoading] = useState(false)
+
+  // Load flags on mount
+  useEffect(() => {
+    loadFlags()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function loadFlags() {
+    setFlagsLoading(true)
+    try {
+      const data = await apiGet('/bugs/flags', token)
+      setFlags(data.flags)
+    } catch (e) {
+      console.error('Failed to load bug flags', e)
+    } finally {
+      setFlagsLoading(false)
+    }
+  }
+
+  async function handleToggle(flag) {
+    try {
+      const data = await apiPost('/bugs/toggle', { flag }, token)
+      setFlags(data.flags)
+      action(`${flag} ${data.enabled ? 'ENABLED ⚠' : 'disabled ✓'}`)
+    } catch (e) {
+      action(e.message || 'Toggle failed')
+    }
+  }
+
+  // Phase 1 – Trigger MFA bypass simulation
+  async function handleMfaTrigger(e) {
+    e.preventDefault()
+    if (!mfaTarget) return
+    setMfaLoading(true); setMfaError(''); setMfaResult(null)
+    try {
+      const data = await apiPost('/bugs/trigger/mfa-bypass', { target_email: mfaTarget }, token)
+      setMfaResult(data)
+      action('Attack simulation complete — check Security panel')
+    } catch (err) {
+      setMfaError(err.message || 'Simulation failed')
+    } finally {
+      setMfaLoading(false)
+    }
+  }
+
+  // Phase 2 – SQL injection test
+  async function handleSqliSearch(e) {
+    e.preventDefault()
+    if (sqliQuery === '') return
+    setSqliLoading(true); setSqliError(''); setSqliResult(null)
+    try {
+      const data = await apiPost('/bugs/search', { query: sqliQuery }, token)
+      setSqliResult(data)
+    } catch (err) {
+      setSqliError(err.message || 'Search failed')
+    } finally {
+      setSqliLoading(false)
+    }
+  }
+
+  // Phase 3 – IDOR account fetch
+  async function handleIdorFetch(e) {
+    e.preventDefault()
+    if (!idorAccountId) return
+    setIdorLoading(true); setIdorError(''); setIdorResult(null)
+    try {
+      const data = await apiGet(`/bugs/account?account_id=${idorAccountId}`, token)
+      setIdorResult(data)
+    } catch (err) {
+      setIdorError(err.message || 'Fetch failed')
+    } finally {
+      setIdorLoading(false)
+    }
+  }
+
+  // Phase 3 – Enumerate all accounts (to find targets)
+  async function handleIdorList() {
+    setIdorListLoading(true); setIdorAccounts(null)
+    try {
+      const data = await apiGet('/bugs/accounts/list', token)
+      setIdorAccounts(data)
+    } catch (err) {
+      setIdorError(err.message || 'List failed')
+    } finally {
+      setIdorListLoading(false)
+    }
+  }
+
+  const bugMeta = [
+    {
+      flag: 'BUG_MFA',
+      phase: 1,
+      title: 'MFA Disabled / Account Takeover',
+      risk: 'CRITICAL',
+      description: 'When enabled, the OTP step is skipped entirely on login. Any valid email+password immediately grants a full session — no MFA challenge issued. Also exposes a trigger to simulate a full brute-force → account takeover attack trail.',
+      cve: 'CWE-308: Use of Single-factor Authentication',
+    },
+    {
+      flag: 'BUG_SQLI',
+      phase: 2,
+      title: 'SQL Injection Vulnerability',
+      risk: 'HIGH',
+      description: 'When enabled, the search endpoint constructs raw SQL queries using direct string interpolation. User input is never sanitized or parameterized. Payloads like \' OR \'1\'=\'1 or UNION SELECT will return unauthorized data.',
+      cve: 'CWE-89: Improper Neutralization of Special Elements in SQL Query',
+    },
+    {
+      flag: 'BUG_IDOR',
+      phase: 3,
+      title: 'Broken Access Control (IDOR)',
+      risk: 'HIGH',
+      description: 'When enabled, the account and transaction endpoints do not verify resource ownership. Any authenticated customer can access any other customer\'s account details and full transaction history by guessing or enumerating account IDs.',
+      cve: 'CWE-639: Authorization Bypass Through User-Controlled Key',
+    },
+  ]
+
+  const riskColor = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
+
+  return (
+    <div style={{ padding: '0', fontFamily: 'inherit' }}>
+      {/* Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #1a0a2e 0%, #16213e 50%, #0f3460 100%)',
+        borderRadius: '16px',
+        padding: '28px 32px',
+        marginBottom: '24px',
+        border: '1px solid rgba(255,71,87,0.3)',
+        position: 'relative',
+        overflow: 'hidden',
+      }}>
+        <div style={{ position: 'absolute', top: 0, right: 0, width: '300px', height: '100%', background: 'radial-gradient(circle at 80% 50%, rgba(255,71,87,0.15), transparent 70%)', pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>⚠</div>
+          <div>
+            <h2 style={{ color: '#fff', margin: 0, fontSize: '22px', fontWeight: 700 }}>Vulnerability Simulation Lab</h2>
+            <p style={{ color: 'rgba(255,255,255,0.6)', margin: 0, fontSize: '13px', marginTop: '2px' }}>Internal Risk Assessment Platform · Manager Access Only</p>
+          </div>
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.75)', margin: 0, fontSize: '13.5px', lineHeight: 1.6 }}>
+          Each toggle activates a real, exploitable vulnerability in this banking platform. Use the interactive panels below to trigger and observe each attack. All events are logged to the Security panel for risk scoring.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
+          {['Northstar Risk Engine v2.1', '3 Vulnerabilities Loaded', 'All Events Logged', 'Manager Auth Required'].map(tag => (
+            <span key={tag} style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', fontSize: '11px', border: '1px solid rgba(255,255,255,0.1)' }}>{tag}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* Status bar */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        {bugMeta.map(b => (
+          <div key={b.flag} style={{
+            flex: 1, minWidth: '200px',
+            padding: '14px 18px',
+            borderRadius: '12px',
+            background: flags[b.flag] ? 'rgba(255,71,87,0.12)' : 'rgba(46,213,115,0.08)',
+            border: `1px solid ${flags[b.flag] ? 'rgba(255,71,87,0.4)' : 'rgba(46,213,115,0.3)'}`,
+            display: 'flex', alignItems: 'center', gap: '12px',
+          }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: flags[b.flag] ? '#ff4757' : '#2ed573', boxShadow: `0 0 8px ${flags[b.flag] ? '#ff475780' : '#2ed57380'}`, flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: '13px', color: '#39465d' }}>Phase {b.phase}</div>
+              <div style={{ fontSize: '11px', color: '#9aa5b5' }}>{flags[b.flag] ? '⚠ VULNERABLE' : '✓ Secure'}</div>
+            </div>
+            <button
+              onClick={() => handleToggle(b.flag)}
+              disabled={flagsLoading}
+              style={{
+                padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+                background: flags[b.flag] ? '#ff4757' : '#2ed573',
+                color: '#fff',
+                transition: 'all 0.2s',
+              }}
+            >
+              {flags[b.flag] ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Phase Cards */}
+      {bugMeta.map((b) => (
+        <div key={b.flag} style={{
+          borderRadius: '16px',
+          border: `1px solid ${flags[b.flag] ? 'rgba(255,71,87,0.3)' : 'rgba(0,0,0,0.06)'}`,
+          background: '#fff',
+          marginBottom: '20px',
+          overflow: 'hidden',
+          boxShadow: flags[b.flag] ? '0 4px 24px rgba(255,71,87,0.1)' : '0 2px 12px rgba(0,0,0,0.04)',
+          transition: 'all 0.3s',
+        }}>
+          {/* Card header */}
+          <div style={{
+            padding: '20px 24px',
+            borderBottom: '1px solid rgba(0,0,0,0.06)',
+            display: 'flex', alignItems: 'center', gap: '16px',
+            background: flags[b.flag] ? 'linear-gradient(135deg, rgba(255,71,87,0.06), rgba(255,107,53,0.04))' : 'transparent',
+          }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: flags[b.flag] ? 'rgba(255,71,87,0.15)' : 'rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>
+              {b.phase === 1 ? '🔐' : b.phase === 2 ? '💉' : '🔓'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#9aa5b5', letterSpacing: '0.08em' }}>PHASE {b.phase}</span>
+                <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: `${riskColor[b.risk]}22`, color: riskColor[b.risk] }}>{b.risk}</span>
+                {flags[b.flag] && <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: 'rgba(255,71,87,0.15)', color: '#ff4757', animation: 'none' }}>● ACTIVE</span>}
+              </div>
+              <h3 style={{ margin: '4px 0 0', fontSize: '16px', fontWeight: 700, color: '#39465d' }}>{b.title}</h3>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => handleToggle(b.flag)}
+                style={{
+                  padding: '8px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                  fontWeight: 600, fontSize: '13px',
+                  background: flags[b.flag] ? '#ff4757' : '#2ed573',
+                  color: '#fff',
+                  transition: 'all 0.2s',
+                  boxShadow: flags[b.flag] ? '0 4px 12px rgba(255,71,87,0.3)' : '0 4px 12px rgba(46,213,115,0.3)',
+                }}
+              >
+                {flags[b.flag] ? '⏹ Disable' : '▶ Enable'}
+              </button>
+            </div>
+          </div>
+
+          {/* Card body */}
+          <div style={{ padding: '20px 24px' }}>
+            <p style={{ color: '#6b7a8d', fontSize: '13.5px', margin: '0 0 12px', lineHeight: 1.6 }}>{b.description}</p>
+            <div style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '6px', background: 'rgba(0,0,0,0.04)', fontSize: '11px', color: '#9aa5b5', fontFamily: 'monospace', marginBottom: '20px' }}>{b.cve}</div>
+
+            {/* Phase 1 controls */}
+            {b.phase === 1 && (
+              <div>
+                <div style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test MFA Bypass:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above → <strong>MFA is now disabled for ALL users</strong></li>
+                    <li>Open a new tab → go to the login page → sign in with any employee/customer credentials</li>
+                    <li>You will land <strong>directly on the dashboard</strong> — no OTP screen appears</li>
+                    <li>Use the Trigger panel below to inject a full attack trail into the Security panel</li>
+                    <li>Go to <strong>Security</strong> tab → see BRUTE_FORCE, NO_MFA_CONFIGURED, ACCOUNT_TAKEOVER events</li>
+                    <li>Disable Bug → try logging in again → OTP screen returns</li>
+                  </ol>
+                </div>
+                {!flags['BUG_MFA'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Enable it above to activate the attack simulation.
+                  </div>
+                )}
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🎯 Simulate Attack Trail</p>
+                  <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: '#9aa5b5' }}>Enter a target employee/customer email. This writes a realistic attack event chain to the Security panel: 4× failed logins, brute-force detection, ACCOUNT_TAKEOVER, and SUSPICIOUS_LOGIN events.</p>
+                  <form onSubmit={handleMfaTrigger} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <input
+                      className="text-input" style={{ flex: 1, minWidth: '200px' }}
+                      placeholder="victim@northstarbank.com"
+                      value={mfaTarget}
+                      onChange={e => setMfaTarget(e.target.value)}
+                      type="email"
+                    />
+                    <button type="submit" disabled={mfaLoading || !flags['BUG_MFA']} className="primary-button" style={{ padding: '10px 20px' }}>
+                      {mfaLoading ? 'Simulating...' : '⚡ Trigger Attack'}
+                    </button>
+                  </form>
+                  {mfaError && <div className="login-error" style={{ marginTop: '10px' }}>{mfaError}</div>}
+                  {mfaResult && (
+                    <div style={{ marginTop: '14px', background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.2)', borderRadius: '8px', padding: '14px 16px' }}>
+                      <p style={{ margin: '0 0 8px', fontWeight: 600, fontSize: '13px', color: '#ff4757' }}>⚠ Simulation Complete</p>
+                      <p style={{ margin: '0 0 8px', fontSize: '12.5px', color: '#6b7a8d' }}>{mfaResult.message}</p>
+                      <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#9aa5b5' }}>
+                        {(mfaResult.events_generated || []).map((ev, i) => <div key={i} style={{ padding: '2px 0' }}>• {ev}</div>)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Phase 2 controls */}
+            {b.phase === 2 && (
+              <div>
+                <div style={{ background: 'rgba(255,107,53,0.05)', border: '1px solid rgba(255,107,53,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test SQL Injection:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Type a <strong>normal email</strong> in the search box → gets that user only</li>
+                    <li>Type <code style={{background:'rgba(0,0,0,0.06)',padding:'1px 6px',borderRadius:'4px'}}>&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --</code> → all users returned</li>
+                    <li>Type <code style={{background:'rgba(0,0,0,0.06)',padding:'1px 6px',borderRadius:'4px'}}>&#x27; UNION SELECT id,email,password_hash,role,status,created_at,last_login,phone FROM users --</code> → password hashes exposed</li>
+                    <li>Disable Bug → same payloads return empty results (parameterized)</li>
+                  </ol>
+                </div>
+                {!flags['BUG_SQLI'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Parameterized queries are in use.
+                  </div>
+                )}
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>💉 SQL Injection Test Console</p>
+                  <form onSubmit={handleSqliSearch} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                    <input
+                      className="text-input" style={{ flex: 1, fontFamily: 'monospace', minWidth: '250px' }}
+                      placeholder="Enter email or SQL injection payload..."
+                      value={sqliQuery}
+                      onChange={e => setSqliQuery(e.target.value)}
+                    />
+                    <button type="submit" disabled={sqliLoading} className="primary-button" style={{ padding: '10px 20px', background: flags['BUG_SQLI'] ? '#ff6b35' : undefined }}>
+                      {sqliLoading ? 'Executing...' : '▶ Execute Query'}
+                    </button>
+                  </form>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                    {["' OR '1'='1' --", "' OR '1'='1", "admin@northstar.com"].map(p => (
+                      <button key={p} onClick={() => setSqliQuery(p)} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(0,0,0,0.1)', background: '#fff', fontSize: '11px', fontFamily: 'monospace', cursor: 'pointer', color: '#6b7a8d' }}>{p}</button>
+                    ))}
+                  </div>
+                  {sqliError && <div className="login-error" style={{ marginTop: '10px' }}>{sqliError}</div>}
+                  {sqliResult && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{
+                        padding: '10px 14px', borderRadius: '8px',
+                        background: sqliResult.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.08)' : 'rgba(46,213,115,0.08)',
+                        border: `1px solid ${sqliResult.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.3)' : 'rgba(46,213,115,0.3)'}`,
+                        marginBottom: '12px',
+                      }}>
+                        <div style={{ fontWeight: 700, fontSize: '13px', color: sqliResult.mode === 'VULNERABLE' ? '#ff4757' : '#2ed573', marginBottom: '4px' }}>
+                          {sqliResult.mode === 'VULNERABLE' ? '⚠ VULNERABLE MODE' : '✓ SECURE MODE'} — {sqliResult.result_count} row(s) returned
+                        </div>
+                        <div style={{ fontFamily: 'monospace', fontSize: '11.5px', color: '#6b7a8d', wordBreak: 'break-all' }}>{sqliResult.query_used}</div>
+                        {sqliResult.warning && <div style={{ marginTop: '6px', fontSize: '12px', color: '#ff6b35', fontWeight: 600 }}>{sqliResult.warning}</div>}
+                      </div>
+                      {sqliResult.results && sqliResult.results.length > 0 && (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                            <thead>
+                              <tr style={{ background: 'rgba(0,0,0,0.04)' }}>
+                                {Object.keys(sqliResult.results[0]).map(k => (
+                                  <th key={k} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: '#6b7a8d', borderBottom: '1px solid rgba(0,0,0,0.08)', whiteSpace: 'nowrap' }}>{k.toUpperCase()}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sqliResult.results.map((row, ri) => (
+                                <tr key={ri} style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                                  {Object.values(row).map((val, vi) => (
+                                    <td key={vi} style={{ padding: '8px 12px', color: '#39465d', fontFamily: 'monospace', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {String(val ?? '')}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Phase 3 controls */}
+            {b.phase === 3 && (
+              <div>
+                <div style={{ background: 'rgba(255,107,53,0.05)', border: '1px solid rgba(255,107,53,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test IDOR:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Click <strong>"List All Accounts"</strong> to enumerate all accounts in the system</li>
+                    <li>Copy any account ID that belongs to a different customer</li>
+                    <li>Paste it in the <strong>"Fetch Account by ID"</strong> field and click Fetch</li>
+                    <li>See another customer's full account details + transactions returned without authorization</li>
+                    <li>Disable Bug → same request returns <strong>403 Forbidden</strong></li>
+                  </ol>
+                </div>
+                {!flags['BUG_IDOR'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Ownership checks enforced.
+                  </div>
+                )}
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <p style={{ margin: 0, fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🔢 Step 1 — Enumerate All Accounts</p>
+                    <button onClick={handleIdorList} disabled={idorListLoading || !flags['BUG_IDOR']} className="secondary-button" style={{ padding: '8px 16px' }}>
+                      {idorListLoading ? 'Loading...' : '📋 List All Accounts'}
+                    </button>
+                  </div>
+                  {idorAccounts && (
+                    <div style={{ overflowX: 'auto' }}>
+                      <div style={{ marginBottom: '8px', fontSize: '12px', color: '#ff4757', fontWeight: 600 }}>⚠ {idorAccounts.total_accounts} accounts exposed — click an ID to use it as target</div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead><tr style={{ background: 'rgba(0,0,0,0.04)' }}>
+                          <th style={{ padding: '8px 12px', textAlign:'left', color:'#6b7a8d', borderBottom:'1px solid rgba(0,0,0,0.08)' }}>ACCOUNT ID</th>
+                          <th style={{ padding: '8px 12px', textAlign:'left', color:'#6b7a8d', borderBottom:'1px solid rgba(0,0,0,0.08)' }}>ACCOUNT NUMBER</th>
+                          <th style={{ padding: '8px 12px', textAlign:'left', color:'#6b7a8d', borderBottom:'1px solid rgba(0,0,0,0.08)' }}>OWNER NAME</th>
+                          <th style={{ padding: '8px 12px', textAlign:'left', color:'#6b7a8d', borderBottom:'1px solid rgba(0,0,0,0.08)' }}>OWNER EMAIL</th>
+                          <th style={{ padding: '8px 12px', textAlign:'left', color:'#6b7a8d', borderBottom:'1px solid rgba(0,0,0,0.08)' }}>TYPE</th>
+                        </tr></thead>
+                        <tbody>
+                          {(idorAccounts.accounts || []).map((a, i) => (
+                            <tr key={a.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.05)', cursor: 'pointer', background: i%2===0 ? 'transparent' : 'rgba(0,0,0,0.02)' }}
+                              onClick={() => setIdorAccountId(String(a.id))}>
+                              <td style={{ padding: '8px 12px', fontFamily:'monospace', color:'#4f7dff', fontWeight:600 }}>{a.id}</td>
+                              <td style={{ padding: '8px 12px', fontFamily:'monospace', color:'#39465d' }}>{a.account_number}</td>
+                              <td style={{ padding: '8px 12px', color:'#39465d' }}>{a.users?.name || '—'}</td>
+                              <td style={{ padding: '8px 12px', color:'#9aa5b5' }}>{a.users?.email || '—'}</td>
+                              <td style={{ padding: '8px 12px', color:'#9aa5b5' }}>{a.account_type}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🔓 Step 2 — Fetch Account by ID (IDOR)</p>
+                  <form onSubmit={handleIdorFetch} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <input
+                      className="text-input" style={{ flex: 1, fontFamily: 'monospace', minWidth: '150px' }}
+                      placeholder="Enter any account ID (e.g. 42)"
+                      value={idorAccountId}
+                      onChange={e => setIdorAccountId(e.target.value)}
+                      type="number"
+                    />
+                    <button type="submit" disabled={idorLoading} className="primary-button" style={{ padding: '10px 20px', background: flags['BUG_IDOR'] ? '#ff6b35' : undefined }}>
+                      {idorLoading ? 'Fetching...' : '🔓 Fetch Account'}
+                    </button>
+                  </form>
+                  {idorError && <div className="login-error" style={{ marginTop: '10px' }}>{idorError}</div>}
+                  {idorResult && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{
+                        padding: '10px 14px', borderRadius: '8px', marginBottom: '12px',
+                        background: idorResult.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.08)' : 'rgba(46,213,115,0.08)',
+                        border: `1px solid ${idorResult.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.3)' : 'rgba(46,213,115,0.3)'}`,
+                      }}>
+                        <div style={{ fontWeight: 700, fontSize: '13px', color: idorResult.mode === 'VULNERABLE' ? '#ff4757' : '#2ed573', marginBottom: '4px' }}>
+                          {idorResult.mode === 'VULNERABLE' ? '⚠ IDOR EXPLOITED' : '✓ SECURE — Access Denied'}
+                        </div>
+                        {idorResult.warning && <div style={{ fontSize: '12px', color: '#ff6b35' }}>{idorResult.warning}</div>}
+                        {idorResult.note && <div style={{ fontSize: '12px', color: '#2ed573' }}>{idorResult.note}</div>}
+                      </div>
+                      {idorResult.account_owner && (
+                        <div style={{ marginBottom: '12px', padding: '12px 16px', borderRadius: '8px', background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)' }}>
+                          <div style={{ fontWeight: 600, fontSize: '12px', color: '#ff4757', marginBottom: '8px' }}>🎯 VICTIM PROFILE EXPOSED:</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '8px' }}>
+                            {Object.entries(idorResult.account_owner).map(([k, v]) => (
+                              <div key={k}><div style={{ fontSize: '10px', color: '#9aa5b5', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</div>
+                                <div style={{ fontSize: '12.5px', fontFamily: 'monospace', color: '#39465d' }}>{String(v ?? '—')}</div></div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {idorResult.account && (
+                        <div style={{ marginBottom: '12px', padding: '12px 16px', borderRadius: '8px', background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)' }}>
+                          <div style={{ fontWeight: 600, fontSize: '12px', color: '#ff4757', marginBottom: '8px' }}>💳 VICTIM ACCOUNT EXPOSED:</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '8px' }}>
+                            {Object.entries(idorResult.account).filter(([k]) => k !== '_bug').map(([k, v]) => (
+                              <div key={k}><div style={{ fontSize: '10px', color: '#9aa5b5', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</div>
+                                <div style={{ fontSize: '12.5px', fontFamily: 'monospace', color: '#39465d' }}>{String(v ?? '—')}</div></div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {idorResult.recent_transactions && idorResult.recent_transactions.length > 0 && (
+                        <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)' }}>
+                          <div style={{ fontWeight: 600, fontSize: '12px', color: '#ff4757', marginBottom: '8px' }}>📜 VICTIM TRANSACTIONS ({idorResult.recent_transactions.length} most recent):</div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+                            <thead><tr style={{ background: 'rgba(0,0,0,0.04)' }}>
+                              {['ID', 'TYPE', 'AMOUNT', 'DESCRIPTION', 'STATUS', 'DATE'].map(h => (
+                                <th key={h} style={{ padding: '6px 10px', textAlign:'left', color:'#9aa5b5', borderBottom:'1px solid rgba(0,0,0,0.08)', whiteSpace:'nowrap' }}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {idorResult.recent_transactions.map(tx => (
+                                <tr key={tx.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                                  <td style={{ padding:'6px 10px', fontFamily:'monospace', color:'#9aa5b5' }}>{tx.id}</td>
+                                  <td style={{ padding:'6px 10px', color:'#39465d' }}>{tx.transaction_type}</td>
+                                  <td style={{ padding:'6px 10px', fontWeight:600, color:'#39465d' }}>{formatINR(Math.abs(tx.amount))}</td>
+                                  <td style={{ padding:'6px 10px', color:'#6b7a8d', maxWidth:'150px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{tx.description || '—'}</td>
+                                  <td style={{ padding:'6px 10px' }}><span className={`status ${(tx.status||'').toLowerCase()}`}>{tx.status}</span></td>
+                                  <td style={{ padding:'6px 10px', color:'#9aa5b5', whiteSpace:'nowrap' }}>{new Date(tx.created_at).toLocaleDateString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Footer note */}
+      <div style={{ marginTop: '20px', padding: '16px 20px', borderRadius: '12px', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)', fontSize: '12.5px', color: '#9aa5b5', lineHeight: 1.6 }}>
+        <strong style={{ color: '#39465d' }}>Note:</strong> All vulnerability flags are stored in server memory and reset to OFF on every server restart. This ensures the platform is always secure by default. All events triggered in this lab are recorded to the Supabase database and visible in the Security panel for risk scoring.
+      </div>
     </div>
   )
 }
