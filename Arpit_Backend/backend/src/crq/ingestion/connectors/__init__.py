@@ -1,12 +1,15 @@
-"""Abstract connector base class - implemented in B2.1."""
+"""Connector abstractions — abstract base + Qualys/Tenable/Splunk/Mock."""
 
-from __future__ import annotations
+from crq.ingestion.connectors.base import BaseConnector
+from crq.ingestion.connectors.mock import MockConnector
+from crq.ingestion.connectors.qualys import QualysConnector
+from crq.ingestion.connectors.splunk import SplunkConnector
+from crq.ingestion.connectors.tenable import TenableConnector
 
-from abc import ABC, abstractmethod
-
-
-class BaseConnector(ABC):
-    """Every connector (Qualys, Tenable, Splunk, Mock) must implement this."""
-
-    @abstractmethod
-    async def fetch(self) -> list[dict[str, object]]: ...
+__all__ = [
+    "BaseConnector",
+    "MockConnector",
+    "QualysConnector",
+    "TenableConnector",
+    "SplunkConnector",
+]

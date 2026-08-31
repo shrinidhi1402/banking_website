@@ -2,6 +2,7 @@
 
 B0.1 — Skeleton with /health stub (upgraded to real checks in B0.2.6).
 B0.4 — OpenTelemetry + correlation ID middleware wired in.
+B2.6 — WebSocket updates channel mounted.
 """
 
 from __future__ import annotations
@@ -62,8 +63,10 @@ def create_app() -> FastAPI:
     # Routers                                                              #
     # ------------------------------------------------------------------ #
     from crq.api.v1 import router as v1_router  # noqa: PLC0415
+    from crq.api.ws import router as ws_router  # noqa: PLC0415
 
     app.include_router(v1_router, prefix="/api/v1")
+    app.include_router(ws_router)
 
     # Prometheus metrics endpoint (B0.4)
     from crq.core.telemetry import metrics_endpoint  # noqa: PLC0415
@@ -84,8 +87,8 @@ async def health() -> JSONResponse:
     """
     Liveness + readiness probe.
 
-    Returns per-dependency status.  Full checks (Postgres, Redis, MinIO)
-    are wired in B0.2.6.  Until then returns a simple ok.
+    Returns per-dependency status. Full checks (Postgres, Redis, MinIO)
+    are wired in B0.2.6. Until then returns a simple ok.
     """
     from crq.core.health import check_health  # noqa: PLC0415
 
