@@ -84,6 +84,7 @@ function formatINR(val) {
 // ─── App root ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [session, setSession]   = useState(null)   // { access_token, user }
+  const [authLoading, setAuthLoading] = useState(true)  // true while restoring session
   const [active, setActive]     = useState('Overview')
   const [notice, setNotice]     = useState('')
 
@@ -170,6 +171,8 @@ export default function App() {
   }, [session, refreshCustomerData, refreshEmployeeData, refreshManagerData])
 
   const handleLogin = useCallback((sessionData) => {
+    // Persist token so the session survives a page refresh
+    localStorage.setItem('northstar_token', sessionData.access_token)
     setSession(sessionData)
     setActive('Overview')
   }, [])
@@ -180,10 +183,29 @@ export default function App() {
         await apiPost('/auth/logout', {}, session.access_token)
       }
     } catch { /* ignore logout errors */ }
+    localStorage.removeItem('northstar_token')
     setSession(null)
     setActive('Overview')
   }, [session])
 
+  // ── Bootstrap: restore session from localStorage on mount ─────────────────
+  useEffect(() => {
+    const stored = localStorage.getItem('northstar_token')
+    // Validate the stored token against the backend before trusting it
+    const restore = stored
+      ? apiGet('/auth/me', stored)
+          .then((data) => {
+            setSession({ access_token: stored, user: data.user })
+          })
+          .catch(() => {
+            // Token is invalid or expired — clear it and show login
+            localStorage.removeItem('northstar_token')
+          })
+      : Promise.resolve()
+    restore.finally(() => setAuthLoading(false))
+  }, [])
+
+  if (authLoading) return <div className="login-shell" style={{display:'flex',alignItems:'center',justifyContent:'center',color:'#9aa5b5',fontSize:'14px',letterSpacing:'0.04em'}}>Restoring session…</div>
   if (!session) return <LoginPage onLogin={handleLogin} />
 
   const dbRole     = session.user?.role                        // CUSTOMER / EMPLOYEE / MANAGER
@@ -1477,6 +1499,7 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
 
 // ─── Bug Lab Panel ─────────────────────────────────────────────────────────────
 // Phase 1 + 2 + 3 vulnerability simulation controls. MANAGER ONLY.
+// eslint-disable-next-line no-unused-vars
 function BugLabPanel({ session, action }) {
   const token = session?.access_token
 
@@ -1504,12 +1527,6 @@ function BugLabPanel({ session, action }) {
   const [idorAccounts, setIdorAccounts] = useState(null)
   const [idorListLoading, setIdorListLoading] = useState(false)
 
-  // Load flags on mount
-  useEffect(() => {
-    loadFlags()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   async function loadFlags() {
     setFlagsLoading(true)
     try {
@@ -1521,6 +1538,12 @@ function BugLabPanel({ session, action }) {
       setFlagsLoading(false)
     }
   }
+
+  // Load flags on mount
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadFlags()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleToggle(flag) {
     try {
