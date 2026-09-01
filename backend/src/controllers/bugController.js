@@ -45,7 +45,7 @@ export function toggle(req, res, next) {
   try {
     const { flag } = req.body
     if (!flag) throw new ApiError(400, 'flag is required')
-    const validFlags = ['BUG_MFA', 'BUG_SQLI', 'BUG_IDOR']
+    const validFlags = ['BUG_MFA', 'BUG_SQLI', 'BUG_IDOR', 'BUG_EXCESSIVE_PRIVILEGES']
     if (!validFlags.includes(flag)) throw new ApiError(400, `Invalid flag. Must be one of: ${validFlags.join(', ')}`)
     const newState = toggleBugFlag(flag)
     console.log(`[BugLab] ${flag} toggled → ${newState ? 'ON ⚠' : 'OFF ✓'} by Manager ${req.auth?.profile?.email}`)
@@ -409,6 +409,65 @@ export async function idorListAccounts(req, res, next) {
       warning: '⚠ IDOR VULNERABILITY ACTIVE: Full account enumeration exposed. An attacker can now pick any account_id to exploit.',
       total_accounts: data.length,
       accounts: data,
+    })
+  } catch (e) { next(e) }
+}
+
+// ─── Phase 4: Excessive Privileges / Insider Threat ──────────────────────────
+
+/**
+ * GET /api/bugs/insider-threat
+ * 
+ * When BUG_EXCESSIVE_PRIVILEGES is OFF: returns simulation disabled.
+ * When BUG_EXCESSIVE_PRIVILEGES is ON: verifies EMPLOYEE role, simulates excessive access, 
+ * logs EXCESSIVE_PRIVILEGE_DETECTED.
+ */
+export async function insiderThreat(req, res, next) {
+  try {
+    const bugOn = isBugEnabled('BUG_EXCESSIVE_PRIVILEGES')
+    
+    if (!bugOn) {
+      return res.json({
+        mode: 'SECURE',
+        bug_enabled: false,
+        note: 'Simulation disabled.'
+      })
+    }
+
+    const callerId = req.auth.profile.id
+    const callerRole = req.auth.profile.role
+
+    if (callerRole !== 'EMPLOYEE') {
+      throw new ApiError(403, 'This simulation requires logging in as an EMPLOYEE.')
+    }
+
+    console.warn(`[BugLab] INSIDER THREAT: Employee ${req.auth.profile.email} accessing restricted data`)
+
+    // Log the security event
+    await supabaseAdmin.from('security_events').insert({
+      user_id: callerId,
+      event_type: 'EXCESSIVE_PRIVILEGE_DETECTED',
+      severity: 'HIGH',
+      description: `SIMULATED: Employee ${req.auth.profile.email} bypassed role restrictions and accessed sensitive customer data due to excessive privileges.`,
+      ip_address: req.ip || '127.0.0.1',
+    })
+
+    // Fetch demo sanitized data that an employee shouldn't normally see in bulk
+    const { data: sensitiveData, error } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email, role, status')
+      .in('role', ['MANAGER', 'EMPLOYEE'])
+      .limit(10)
+
+    if (error) throw new ApiError(500, 'Database error')
+
+    res.json({
+      mode: 'VULNERABLE',
+      bug_enabled: true,
+      warning: '⚠ EXCESSIVE PRIVILEGES VULNERABILITY ACTIVE: Role bounds bypassed.',
+      accessed_by: { user_id: callerId, email: req.auth.profile.email, role: callerRole },
+      sensitive_data_exposed: sensitiveData,
+      message: 'Logged EXCESSIVE_PRIVILEGE_DETECTED security event.'
     })
   } catch (e) { next(e) }
 }

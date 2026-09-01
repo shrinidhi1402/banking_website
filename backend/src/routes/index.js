@@ -25,18 +25,22 @@ const managerRouter = Router(); managerRouter.use(requireRole('MANAGER'))
 managerRouter.get('/dashboard', ops.reports).get('/customers', ops.managerCustomers).get('/customers/:id', ops.managerCustomer).put('/customers/:id/status', ops.customerStatus).get('/employees', ops.managerEmployees).post('/employees', ops.createEmployee).put('/employees/:id', ops.updateEmployee).put('/employees/:id/status', ops.employeeStatus).get('/transactions/suspicious', ops.suspiciousTransactions).get('/transactions', ops.managerTransactions).get('/requests', ops.managerRequests).put('/requests/:id', ops.decideRequest).get('/security-events', ops.securityEvents).get('/reports', ops.reports).get('/profile', ops.managerProfile).put('/profile', ops.updateOwnProfile).put('/password', customer.password)
 router.use('/manager', managerRouter)
 
-// ─── Bug Lab Routes (Manager only) ────────────────────────────────────────────
-// Phase 0 – Flag management
-const bugRouter = Router(); bugRouter.use(requireRole('MANAGER'))
-bugRouter.get('/flags',                bugs.getFlags)
-bugRouter.post('/toggle',              bugs.toggle)
-// Phase 1 – MFA Bypass
-bugRouter.post('/trigger/mfa-bypass',  bugs.triggerMfaBypass)
-// Phase 2 – SQL Injection
-bugRouter.post('/search',              bugs.sqlSearch)
-// Phase 3 – IDOR
-bugRouter.get('/account',              bugs.idorAccount)
-bugRouter.get('/accounts/list',        bugs.idorListAccounts)
+// ─── Bug Lab Routes ─────────────────────────────────────────────────────────────
+const bugRouter = Router()
+
+// Phase 4 – Insider Threat (Requires EMPLOYEE or MANAGER role)
+bugRouter.get('/insider-threat', requireRole('EMPLOYEE', 'MANAGER'), bugs.insiderThreat)
+
+// Phase 0-3 – Flag management and simulations (Manager only)
+const managerBugRouter = Router(); managerBugRouter.use(requireRole('MANAGER'))
+managerBugRouter.get('/flags',                bugs.getFlags)
+managerBugRouter.post('/toggle',              bugs.toggle)
+managerBugRouter.post('/trigger/mfa-bypass',  bugs.triggerMfaBypass)
+managerBugRouter.post('/search',              bugs.sqlSearch)
+managerBugRouter.get('/account',              bugs.idorAccount)
+managerBugRouter.get('/accounts/list',        bugs.idorListAccounts)
+
+bugRouter.use(managerBugRouter)
 router.use('/bugs', bugRouter)
 
 export default router

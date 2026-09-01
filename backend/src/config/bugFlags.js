@@ -8,12 +8,14 @@
  *  BUG_MFA   – Phase 1: MFA bypass / Account Takeover simulation
  *  BUG_SQLI  – Phase 2: SQL Injection vulnerability simulation
  *  BUG_IDOR  – Phase 3: Broken Access Control (IDOR) simulation
+ *  BUG_EXCESSIVE_PRIVILEGES - Phase 4: Excessive Privileges / Insider Threat
  */
 
 const flags = {
   BUG_MFA:  false,
   BUG_SQLI: false,
   BUG_IDOR: false,
+  BUG_EXCESSIVE_PRIVILEGES: false,
 }
 
 /**
@@ -25,7 +27,7 @@ export function getBugFlags() {
 
 /**
  * Returns true if a specific bug flag is enabled.
- * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'} flag
+ * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'|'BUG_EXCESSIVE_PRIVILEGES'} flag
  */
 export function isBugEnabled(flag) {
   return flags[flag] === true
@@ -33,7 +35,7 @@ export function isBugEnabled(flag) {
 
 /**
  * Toggles a specific bug flag on/off and returns the new state.
- * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'} flag
+ * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'|'BUG_EXCESSIVE_PRIVILEGES'} flag
  */
 export function toggleBugFlag(flag) {
   if (!(flag in flags)) throw new Error(`Unknown bug flag: ${flag}`)
@@ -43,7 +45,7 @@ export function toggleBugFlag(flag) {
 
 /**
  * Explicitly sets a bug flag.
- * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'} flag
+ * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'|'BUG_EXCESSIVE_PRIVILEGES'} flag
  * @param {boolean} value
  */
 export function setBugFlag(flag, value) {

@@ -53,10 +53,10 @@ const roleConfig = {
     nav: ['Overview', 'Transfer money', 'Beneficiaries', 'Transactions', 'Profile', 'Security'],
   },
   Employee: {
-    nav: ['Overview', 'Customers', 'Transactions', 'Requests', 'Profile', 'Security'],
+    nav: ['Overview', 'Customers', 'Transactions', 'Requests', 'Profile', 'Security', 'Insider Threat'],
   },
   Manager: {
-    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports', 'Profile'],
+    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports', 'Profile', 'Bug Lab'],
   },
 }
 
@@ -645,6 +645,7 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
     Security:        ['Security activity', 'A clear view of important account and team events.'],
     Reports:         ['Reports & insights', 'Understand the performance of your banking operation.'],
     Profile:         ['Your profile', 'Keep your personal details and preferences up to date.'],
+    'Insider Threat': ['Vulnerability Simulation', 'Excessive Privileges / Insider Threat demonstration.'],
   }
   const [title, description] = titles[active] || ['Change password', 'Keep your account secure with a strong, unique password.']
 
@@ -668,6 +669,8 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
   else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} />
   else if (active === 'Security')                        Content = <PasswordForm action={action} session={session} />
   else if (active === 'Reports'    && isMgr)             Content = <ManagerReportsPanel action={action} managerData={managerData} />
+  else if (active === 'Bug Lab'    && isMgr)             Content = <BugLabPanel session={session} action={action} />
+  else if (active === 'Insider Threat' && isEmp)         Content = <InsiderThreatPanel action={action} session={session} />
   else Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
 
   return (
@@ -888,6 +891,7 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager }) 
     { flag: 'BUG_MFA',  label: 'MFA Bypass',          risk: 'CRITICAL', cwe: 'CWE-308', detail: 'Disables OTP step on login. All accounts become single-factor.' },
     { flag: 'BUG_SQLI', label: 'SQL Injection',        risk: 'HIGH',     cwe: 'CWE-89',  detail: 'Customer search accepts unsanitized input. Filter injection possible.' },
     { flag: 'BUG_IDOR', label: 'Broken Access Control',risk: 'HIGH',     cwe: 'CWE-639', detail: 'Account endpoint skips ownership check. Any account ID accessible.' },
+    { flag: 'BUG_EXCESSIVE_PRIVILEGES', label: 'Excessive Privileges', risk: 'HIGH', cwe: 'CWE-269', detail: 'Simulates an employee having excessive permissions to sensitive banking data.' },
   ]
   const riskCol = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
 
@@ -908,9 +912,9 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager }) 
             <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '1px' }}>Risk Assessment Platform · Activate to simulate real attack surface</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR].filter(Boolean).length > 0 && (
+            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES].filter(Boolean).length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', color: '#ff4757', fontSize: '11px', fontWeight: 700 }}>
-                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR].filter(Boolean).length} ACTIVE
+                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES].filter(Boolean).length} ACTIVE
               </span>
             )}
           </div>
@@ -1639,6 +1643,14 @@ function BugLabPanel({ session, action }) {
       description: 'When enabled, the account and transaction endpoints do not verify resource ownership. Any authenticated customer can access any other customer\'s account details and full transaction history by guessing or enumerating account IDs.',
       cve: 'CWE-639: Authorization Bypass Through User-Controlled Key',
     },
+    {
+      flag: 'BUG_EXCESSIVE_PRIVILEGES',
+      phase: 4,
+      title: 'Excessive Privileges / Insider Threat',
+      risk: 'HIGH',
+      description: 'Simulates an employee having excessive permissions to sensitive banking data. When enabled, employees can execute unauthorized queries to access data outside their normal role boundaries.',
+      cve: 'CWE-269: Improper Privilege Management',
+    },
   ]
 
   const riskColor = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
@@ -1724,7 +1736,7 @@ function BugLabPanel({ session, action }) {
             background: flags[b.flag] ? 'linear-gradient(135deg, rgba(255,71,87,0.06), rgba(255,107,53,0.04))' : 'transparent',
           }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: flags[b.flag] ? 'rgba(255,71,87,0.15)' : 'rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>
-              {b.phase === 1 ? '🔐' : b.phase === 2 ? '💉' : '🔓'}
+              {b.phase === 1 ? '🔐' : b.phase === 2 ? '💉' : b.phase === 3 ? '🔓' : '🕵️'}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
@@ -2017,6 +2029,26 @@ function BugLabPanel({ session, action }) {
                 </div>
               </div>
             )}
+            {/* Phase 4 controls */}
+            {b.phase === 4 && (
+              <div>
+                <div style={{ background: 'rgba(255,107,53,0.05)', border: '1px solid rgba(255,107,53,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test Insider Threat:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Log out of this Manager account and log in as an <strong>Employee</strong></li>
+                    <li>Navigate to the new <strong>Insider Threat</strong> tab in the Employee sidebar</li>
+                    <li>Run the simulation to extract unauthorized data</li>
+                    <li>Return to Manager Security panel to see the EXCESSIVE_PRIVILEGE_DETECTED event logged</li>
+                  </ol>
+                </div>
+                {!flags['BUG_EXCESSIVE_PRIVILEGES'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Employees are restricted to their normal bounds.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ))}
@@ -2025,6 +2057,83 @@ function BugLabPanel({ session, action }) {
       <div style={{ marginTop: '20px', padding: '16px 20px', borderRadius: '12px', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)', fontSize: '12.5px', color: '#9aa5b5', lineHeight: 1.6 }}>
         <strong style={{ color: '#39465d' }}>Note:</strong> All vulnerability flags are stored in server memory and reset to OFF on every server restart. This ensures the platform is always secure by default. All events triggered in this lab are recorded to the Supabase database and visible in the Security panel for risk scoring.
       </div>
+    </div>
+  )
+}
+
+// ─── Phase 4 Employee Insider Threat Panel ─────────────────────────────────────
+function InsiderThreatPanel({ action, session }) {
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSimulate = async () => {
+    setLoading(true); setError(''); setResult(null)
+    try {
+      const data = await apiGet('/bugs/insider-threat', session.access_token)
+      setResult(data)
+      if (data.mode === 'VULNERABLE') {
+        action('Insider Threat Simulation Completed - Data Extracted')
+      } else {
+        action('Simulation Disabled')
+      }
+    } catch (err) {
+      setError(err.message || 'Simulation failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="panel generic-panel" style={{ padding: '24px' }}>
+      <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px', marginBottom: '20px' }}>
+        <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🕵️ Excessive Privileges Data Extraction</p>
+        <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: '#9aa5b5' }}>Attempt to access sensitive Manager/Employee data that normally falls outside your role bounds.</p>
+        <button onClick={handleSimulate} disabled={loading} className="primary-button" style={{ padding: '10px 20px' }}>
+          {loading ? 'Executing...' : 'Run Extraction Script'}
+        </button>
+        {error && <div className="login-error" style={{ marginTop: '10px' }}>{error}</div>}
+      </div>
+      
+      {result && (
+        <div style={{
+          padding: '16px', borderRadius: '8px',
+          background: result.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.05)' : 'rgba(46,213,115,0.08)',
+          border: `1px solid ${result.mode === 'VULNERABLE' ? 'rgba(255,71,87,0.2)' : 'rgba(46,213,115,0.3)'}`,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: '13px', color: result.mode === 'VULNERABLE' ? '#ff4757' : '#2ed573', marginBottom: '8px' }}>
+            {result.mode === 'VULNERABLE' ? result.warning : result.note}
+          </div>
+          
+          {result.mode === 'VULNERABLE' && result.sensitive_data_exposed && (
+            <div>
+              <p style={{ margin: '8px 0', fontSize: '12.5px', color: '#6b7a8d' }}>Extracted {result.sensitive_data_exposed.length} internal records:</p>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(0,0,0,0.04)' }}>
+                      {['ID', 'NAME', 'EMAIL', 'ROLE', 'STATUS'].map(h => (
+                        <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: '#6b7a8d', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.sensitive_data_exposed.map(row => (
+                      <tr key={row.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#9aa5b5' }}>{row.id}</td>
+                        <td style={{ padding: '8px 12px', color: '#39465d' }}>{row.name}</td>
+                        <td style={{ padding: '8px 12px', color: '#6b7a8d' }}>{row.email}</td>
+                        <td style={{ padding: '8px 12px' }}><span className="status active">{row.role}</span></td>
+                        <td style={{ padding: '8px 12px' }}>{row.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
