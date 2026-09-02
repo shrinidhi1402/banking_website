@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 class ControlAssessmentItem(BaseModel):
     """Assessment record for an asset."""
 
-    assessment_id: uuid.UUID
-    asset_id: uuid.UUID
+    assessment_id: int
+    asset_id: int
     asset_name: str | None = None
     coverage_pct: float
     config_quality: float
@@ -25,7 +25,7 @@ class ControlAssessmentItem(BaseModel):
 class ControlEffectivenessResponse(BaseModel):
     """Aggregate control effectiveness response."""
 
-    control_id: uuid.UUID
+    control_id: int
     key: str
     name: str
     description: str | None = None

@@ -43,11 +43,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # ------------------------------------------------------------------ #
-    # Database — Postgres (via PgBouncer in prod)                         #
+    # Database — Supabase                                                  #
     # ------------------------------------------------------------------ #
-    DATABASE_URL: str = "postgresql+asyncpg://crq_app:crq_app_password@localhost:5432/crq"
-    # Direct URL bypasses PgBouncer — used for Alembic migrations only
-    DATABASE_URL_DIRECT: str = "postgresql+asyncpg://crq_app:crq_app_password@localhost:5433/crq"
+    SUPABASE_URL: str = "postgresql+asyncpg://postgres.[ref]:[password]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
+    SUPABASE_SERVICE_KEY: str = "change-me-in-production"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_PRE_PING: bool = True
@@ -58,31 +57,12 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ------------------------------------------------------------------ #
-    # MinIO / S3-compatible object storage                                 #
-    # ------------------------------------------------------------------ #
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_SECURE: bool = False
-    MINIO_DEFAULT_BUCKET: str = "crq-data"
-
-    # ------------------------------------------------------------------ #
-    # Redpanda / Kafka                                                     #
-    # ------------------------------------------------------------------ #
-    KAFKA_BOOTSTRAP_SERVERS: str = "localhost:19092"
-
-    # ------------------------------------------------------------------ #
-    # Keycloak / Auth                                                      #
+    # Supabase Auth                                                        #
     # ------------------------------------------------------------------ #
     # IMPORTANT: Set DISABLE_AUTH=true in dev so teammates are never
-    # blocked by Keycloak setup.  See auth/keycloak.py for details.
+    # blocked by auth setup. See auth/supabase_auth.py for details.
     DISABLE_AUTH: bool = True
-    KEYCLOAK_URL: str = "http://localhost:8080"
-    KEYCLOAK_REALM: str = "crq"
-    KEYCLOAK_CLIENT_ID: str = "crq-api"
-    KEYCLOAK_CLIENT_SECRET: str = "change-me-in-production"
-    # Derived at runtime — do not set directly
-    KEYCLOAK_JWKS_URL: str = ""
+    SUPABASE_JWT_SECRET: str = "change-me-in-production"
 
     # ------------------------------------------------------------------ #
     # Observability                                                        #
@@ -106,16 +86,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "meta-llama/Llama-3.1-8B-Instruct"
     EMBEDDING_MODEL: str = "BAAI/bge-m3"
 
-    def model_post_init(self, __context: object) -> None:
-        """Derive computed fields after init."""
-        if not self.KEYCLOAK_JWKS_URL:
-            # Mypy: object.__setattr__ needed for frozen models; here we use
-            # model_post_init which runs before freeze.
-            object.__setattr__(
-                self,
-                "KEYCLOAK_JWKS_URL",
-                (f"{self.KEYCLOAK_URL}/realms/{self.KEYCLOAK_REALM}/protocol/openid-connect/certs"),
-            )
+
 
     @field_validator("LOG_LEVEL")
     @classmethod

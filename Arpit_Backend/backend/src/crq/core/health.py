@@ -9,7 +9,6 @@ Returns a structured dict consumed by the /health endpoint in main.py:
   "checks": {
     "postgres": {"status": "ok" | "error", "detail": "..."},
     "redis":    {"status": "ok" | "error", "detail": "..."},
-    "minio":    {"status": "ok" | "error", "detail": "..."},
   }
 }
 """
@@ -56,41 +55,18 @@ async def _check_redis() -> dict[str, str]:
         return {"status": "error", "detail": str(exc)}
 
 
-async def _check_minio() -> dict[str, str]:
-    try:
-        import asyncio  # noqa: PLC0415
-
-        from minio import Minio  # noqa: PLC0415
-
-        settings = get_settings()
-        client = Minio(
-            settings.MINIO_ENDPOINT,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE,
-        )
-        # list_buckets is synchronous — run in executor
-        await asyncio.get_event_loop().run_in_executor(None, client.list_buckets)
-        return {"status": "ok"}
-    except Exception as exc:
-        log.warning("minio_health_check_failed", error=str(exc))
-        return {"status": "error", "detail": str(exc)}
-
-
 async def check_health() -> dict[str, Any]:
     """Run all dependency checks concurrently and return aggregated status."""
     settings = get_settings()
 
-    postgres_result, redis_result, minio_result = await asyncio.gather(
+    postgres_result, redis_result = await asyncio.gather(
         _check_postgres(),
         _check_redis(),
-        _check_minio(),
     )
 
     checks = {
         "postgres": postgres_result,
         "redis": redis_result,
-        "minio": minio_result,
     }
 
     all_ok = all(v["status"] == "ok" for v in checks.values())

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, select
+from sqlalchemy.orm import selectinload
 
 from crq.api.v1._utils import PaginatedResponse, paginate
 from crq.core.db import DbSession
@@ -35,7 +34,7 @@ async def list_vulnerabilities(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[VulnerabilityResponse]:
     """Retrieve paginated vulnerabilities prioritized by EAL contribution (architecture §5.2)."""
-    stmt = select(Vulnerability)
+    stmt = select(Vulnerability).options(selectinload(Vulnerability.asset_links))
 
     if in_cisa_kev is not None:
         stmt = stmt.where(Vulnerability.in_cisa_kev == in_cisa_kev)
@@ -68,63 +67,14 @@ async def list_vulnerabilities(
                 id=item.id,
                 cve_id=item.cve_id,
                 cvss_score=float(item.cvss_score) if item.cvss_score is not None else None,
-                cvss_vector=item.cvss_vector,
                 exploit_available=item.exploit_available,
                 in_cisa_kev=item.in_cisa_kev,
                 epss_score=float(item.epss_score) if item.epss_score is not None else None,
                 description=item.description,
                 published_at=item.published_at,
                 eal_contribution=round(eal_contrib, 2),
-                affected_assets_count=len(item.asset_findings) if item.asset_findings else 0,
+                affected_assets_count=len(item.asset_links) if item.asset_links else 0,
             )
-        )
-
-    # If DB has no records yet, return sample records so frontend is unblocked
-    if not results and total == 0:
-        sample_vulns = [
-            VulnerabilityResponse(
-                id=uuid.uuid4(),
-                cve_id="CVE-2024-3094",
-                cvss_score=9.8,
-                cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
-                exploit_available=True,
-                in_cisa_kev=True,
-                epss_score=0.9421,
-                description="XZ Utils Backdoor Remote Code Execution",
-                eal_contribution=4_500_000.0,
-                affected_assets_count=3,
-            ),
-            VulnerabilityResponse(
-                id=uuid.uuid4(),
-                cve_id="CVE-2024-21413",
-                cvss_score=9.8,
-                cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-                exploit_available=True,
-                in_cisa_kev=True,
-                epss_score=0.7812,
-                description="Microsoft Outlook Remote Code Execution Vulnerability (MonikerLink)",
-                eal_contribution=2_800_000.0,
-                affected_assets_count=12,
-            ),
-            VulnerabilityResponse(
-                id=uuid.uuid4(),
-                cve_id="CVE-2023-48795",
-                cvss_score=7.5,
-                cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
-                exploit_available=True,
-                in_cisa_kev=False,
-                epss_score=0.1250,
-                description="Terrapin Attack: SSH Channel Integrity Break",
-                eal_contribution=1_200_000.0,
-                affected_assets_count=8,
-            ),
-        ]
-        return PaginatedResponse(
-            items=sample_vulns,
-            total=len(sample_vulns),
-            page=1,
-            page_size=page_size,
-            total_pages=1,
         )
 
     return PaginatedResponse(
@@ -142,11 +92,11 @@ async def list_vulnerabilities(
     summary="Get single vulnerability detail",
 )
 async def get_vulnerability(
-    id: uuid.UUID,
+    id: int,
     session: DbSession,
 ) -> VulnerabilityResponse:
-    """Get single vulnerability finding by UUID."""
-    stmt = select(Vulnerability).where(Vulnerability.id == id)
+    """Get single vulnerability finding by ID."""
+    stmt = select(Vulnerability).options(selectinload(Vulnerability.asset_links)).where(Vulnerability.id == id)
     result = await session.execute(stmt)
     item = result.scalar_one_or_none()
 
@@ -161,12 +111,11 @@ async def get_vulnerability(
         id=item.id,
         cve_id=item.cve_id,
         cvss_score=float(item.cvss_score) if item.cvss_score is not None else None,
-        cvss_vector=item.cvss_vector,
         exploit_available=item.exploit_available,
         in_cisa_kev=item.in_cisa_kev,
         epss_score=float(item.epss_score) if item.epss_score is not None else None,
         description=item.description,
         published_at=item.published_at,
         eal_contribution=round(eal_contrib, 2),
-        affected_assets_count=len(item.asset_findings) if item.asset_findings else 0,
+        affected_assets_count=len(item.asset_links) if item.asset_links else 0,
     )

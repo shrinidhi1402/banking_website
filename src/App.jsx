@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import './App.css'
+import CRQDashboard from './CRQDashboard.jsx'
 
 // ─── API base ────────────────────────────────────────────────────────────────
 const API = 'http://localhost:3001/api'
@@ -56,7 +57,7 @@ const roleConfig = {
     nav: ['Overview', 'Customers', 'Transactions', 'Requests', 'Profile', 'Security', 'Insider Threat'],
   },
   Manager: {
-    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports', 'Profile', 'Bug Lab'],
+    nav: ['Overview', 'Customers', 'Employees', 'Transactions', 'Requests', 'Security', 'Reports', 'Profile', 'Bug Lab', 'CRQ Dashboard'],
   },
 }
 
@@ -705,6 +706,7 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
   else if (active === 'Security')                        Content = <PasswordForm action={action} session={session} />
   else if (active === 'Reports'    && isMgr)             Content = <ManagerReportsPanel action={action} managerData={managerData} />
   else if (active === 'Bug Lab'    && isMgr)             Content = <BugLabPanel session={session} action={action} onSecretFlagChange={onSecretFlagChange} />
+    else if (active === 'CRQ Dashboard' && isMgr)          Content = <CRQDashboard session={session} action={action} />
   else if (active === 'Insider Threat' && isEmp)         Content = <InsiderThreatPanel action={action} session={session} />
   else Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
 

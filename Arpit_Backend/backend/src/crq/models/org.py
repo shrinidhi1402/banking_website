@@ -1,51 +1,43 @@
-# STUB: replace with real B1.1 model
-"""Organization and BusinessUnit models (stub for B1.1)."""
+"""Organization and BusinessUnit models."""
 
 from __future__ import annotations
 
-import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, Numeric, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
 
-from crq.models.base import AuditMixin, Base
+from crq.models.base import Base, IdMixin, TimestampMixin, UuidMixin
 
-# Fallback JSON type for generic compatibility
-JsonType = JSON().with_variant(JSONB, "postgresql")
+if TYPE_CHECKING:
+    from crq.models.asset import Asset
 
 
-class Organization(AuditMixin, Base):
+class Organization(IdMixin, UuidMixin, TimestampMixin, Base):
     """Organization tenant model."""
+    __tablename__ = "crq_organizations"
 
-    __tablename__ = "organizations"
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    sector: Mapped[str | None] = mapped_column(String(100), default="banking")
-    regulatory_scope: Mapped[list[str] | None] = mapped_column(JsonType, default=list)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    domain: Mapped[str | None] = mapped_column(String, nullable=True)
+    revenue_annual: Mapped[float | None] = mapped_column(Numeric, default=0)
 
     business_units: Mapped[list[BusinessUnit]] = relationship(
         "BusinessUnit", back_populates="organization", cascade="all, delete-orphan"
     )
+    assets: Mapped[list[Asset]] = relationship(
+        "Asset", back_populates="organization", cascade="all, delete-orphan"
+    )
 
 
-class BusinessUnit(AuditMixin, Base):
+class BusinessUnit(IdMixin, UuidMixin, TimestampMixin, Base):
     """Business Unit hierarchy model."""
+    __tablename__ = "crq_business_units"
 
-    __tablename__ = "business_units"
+    org_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crq_organizations.id", ondelete="CASCADE"), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crq_business_units.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revenue_share_pct: Mapped[float | None] = mapped_column(Numeric, default=0)
 
-    org_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    revenue_annual: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("business_units.id", ondelete="SET NULL"), nullable=True
-    )
-
-    organization: Mapped[Organization] = relationship(
-        "Organization", back_populates="business_units"
-    )
-    assets: Mapped[list[Any]] = relationship("Asset", back_populates="business_unit")
+    organization: Mapped[Organization] = relationship("Organization", back_populates="business_units")
+    assets: Mapped[list[Asset]] = relationship("Asset", back_populates="business_unit")

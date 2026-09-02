@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, select
 
@@ -25,8 +23,8 @@ async def list_assets(
     criticality_min: int | None = Query(
         default=None, ge=1, le=10, description="Minimum asset criticality score (1-10)"
     ),
-    business_unit_id: uuid.UUID | None = Query(
-        default=None, description="Filter by business unit UUID"
+    business_unit_id: int | None = Query(
+        default=None, description="Filter by business unit ID"
     ),
     environment: str | None = Query(
         default=None, description="Filter by environment (prod, staging, dev)"
@@ -34,7 +32,7 @@ async def list_assets(
     asset_type: str | None = Query(
         default=None, description="Filter by asset type (server, endpoint, database)"
     ),
-    org_id: uuid.UUID = Query(default=uuid.UUID("00000000-0000-0000-0000-000000000001")),
+    org_id: int = Query(default=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[AssetResponse]:
@@ -138,10 +136,10 @@ async def create_asset(
     summary="Get single asset details",
 )
 async def get_asset(
-    id: uuid.UUID,
+    id: int,
     session: DbSession,
 ) -> AssetResponse:
-    """Get single asset by UUID."""
+    """Get single asset by ID."""
     stmt = select(Asset).where(Asset.id == id)
     result = await session.execute(stmt)
     asset = result.scalar_one_or_none()

@@ -1,70 +1,16 @@
 # ============================================================
-# docker-compose.dev.yml — CRQ full dev stack
+# docker-compose.dev.yml — CRQ dev stack (Supabase adapted)
 # Usage: docker compose -f docker-compose.dev.yml up -d
 # ============================================================
 #
 # Services:
-#   Data:        postgres (TimescaleDB + pgvector), pgbouncer, redis, redpanda, minio
-#   Auth:        keycloak + keycloak-db
+#   Data:        redis (Postgres & Auth handled by Supabase)
 #   Observability: prometheus, grafana, loki, tempo, glitchtip
 #   App:         crq-api (FastAPI), crq-worker (Celery)
 #
-# All data stays LOCAL. No cloud dependencies (architecture principle 2).
 # ============================================================
 
 services:
-
-  # ============================================================
-  # POSTGRES — TimescaleDB HA image includes pgvector
-  # timescale/timescaledb-ha:pg16 bundles pgvector officially.
-  # ============================================================
-  postgres:
-    image: timescale/timescaledb-ha:pg16
-    container_name: crq-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: crq
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_superuser_password
-    volumes:
-      - postgres_data:/home/postgres/pgdata/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
-    ports:
-      - "5433:5432"   # Expose directly for Alembic migrations (bypass PgBouncer)
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d crq"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - crq-net
-
-  # ============================================================
-  # PGBOUNCER — connection pooler (transaction mode)
-  # App connects via pgbouncer:5432, not postgres directly.
-  # ============================================================
-  pgbouncer:
-    image: edoburu/pgbouncer:latest
-    container_name: crq-pgbouncer
-    restart: unless-stopped
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: crq_app
-      DB_PASSWORD: crq_app_password
-      DB_NAME: crq
-      POOL_MODE: transaction
-      MAX_CLIENT_CONN: "200"
-      DEFAULT_POOL_SIZE: "20"
-      AUTH_TYPE: plain
-    ports:
-      - "5432:5432"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - crq-net
 
   # ============================================================
   # REDIS — cache + Celery broker
@@ -83,149 +29,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - crq-net
-
-  # ============================================================
-  # REDPANDA — Kafka-API compatible event bus (single-node dev)
-  # ============================================================
-  redpanda:
-    image: redpandadata/redpanda:v24.2.7
-    container_name: crq-redpanda
-    restart: unless-stopped
-    command:
-      - redpanda
-      - start
-      - --smp=1
-      - --memory=512M
-      - --reserve-memory=0M
-      - --overprovisioned
-      - --node-id=0
-      - --kafka-addr=PLAINTEXT://0.0.0.0:19092,OUTSIDE://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:19092,OUTSIDE://localhost:9092
-      - --pandaproxy-addr=0.0.0.0:8082
-      - --advertise-pandaproxy-addr=localhost:8082
-    volumes:
-      - redpanda_data:/var/lib/redpanda/data
-    ports:
-      - "9092:9092"   # External Kafka clients
-      - "19092:19092" # Internal (docker network)
-      - "8082:8082"   # Pandaproxy REST
-      - "9644:9644"   # Admin API
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-    networks:
-      - crq-net
-
-  # Redpanda Console — web UI for inspecting topics
-  redpanda-console:
-    image: redpandadata/console:v2.7.2
-    container_name: crq-redpanda-console
-    restart: unless-stopped
-    environment:
-      KAFKA_BROKERS: "redpanda:19092"
-    ports:
-      - "8085:8080"
-    depends_on:
-      - redpanda
-    networks:
-      - crq-net
-
-  # ============================================================
-  # MINIO — S3-compatible object storage
-  # ============================================================
-  minio:
-    image: minio/minio:RELEASE.2024-10-02T17-50-41Z
-    container_name: crq-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    volumes:
-      - minio_data:/data
-    ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    networks:
-      - crq-net
-
-  # Create default bucket on startup
-  minio-init:
-    image: minio/mc:RELEASE.2024-10-02T08-27-28Z
-    container_name: crq-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/crq-data &&
-      echo 'MinIO bucket crq-data ready.'
-      "
-    networks:
-      - crq-net
-
-  # ============================================================
-  # KEYCLOAK — OIDC identity provider
-  # Separate keycloak-db (Postgres) from the app DB.
-  # ============================================================
-  keycloak-db:
-    image: postgres:16-alpine
-    container_name: crq-keycloak-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: keycloak_password
-    volumes:
-      - keycloak_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - crq-net
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:25.0
-    container_name: crq-keycloak
-    restart: unless-stopped
-    command:
-      - start-dev
-      - --import-realm
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak_password
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin123
-      KC_HEALTH_ENABLED: "true"
-      KC_METRICS_ENABLED: "true"
-    volumes:
-      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-    ports:
-      - "8080:8080"
-    depends_on:
-      keycloak-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; cat <&3 | grep -q '\"status\": \"UP\"'"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
     networks:
       - crq-net
 
@@ -307,7 +110,7 @@ services:
       - crq-net
 
   # ============================================================
-  # GLITCHTIP — error tracking (open-source Sentry alternative)
+  # GLITCHTIP — error tracking
   # ============================================================
   glitchtip-db:
     image: postgres:16-alpine
@@ -350,24 +153,16 @@ services:
       dockerfile: Dockerfile
     container_name: crq-api
     restart: unless-stopped
-    env_file: .env
+    env_file: ./backend/.env
     environment:
-      CRQ_DATABASE_URL: postgresql+asyncpg://crq_app:crq_app_password@pgbouncer:5432/crq
-      CRQ_DATABASE_URL_DIRECT: postgresql+asyncpg://crq_app:crq_app_password@postgres:5432/crq
       CRQ_REDIS_URL: redis://redis:6379/0
-      CRQ_MINIO_ENDPOINT: minio:9000
-      CRQ_KAFKA_BOOTSTRAP_SERVERS: redpanda:19092
-      CRQ_KEYCLOAK_URL: http://keycloak:8080
       CRQ_OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       CRQ_DISABLE_AUTH: "true"
+      # Supabase env vars should be passed here or loaded from .env
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     networks:
       - crq-net
@@ -382,15 +177,14 @@ services:
     container_name: crq-worker
     restart: unless-stopped
     command: ["celery", "-A", "crq.workers.celery_app:celery_app", "worker", "--loglevel=info", "--concurrency=2"]
-    env_file: .env
+    env_file: ./backend/.env
     environment:
-      CRQ_DATABASE_URL: postgresql+asyncpg://crq_app:crq_app_password@pgbouncer:5432/crq
       CRQ_REDIS_URL: redis://redis:6379/0
       CRQ_CELERY_BROKER_URL: redis://redis:6379/1
       CRQ_CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
     networks:
       - crq-net
 
@@ -398,11 +192,7 @@ services:
 # Volumes
 # ============================================================
 volumes:
-  postgres_data:
   redis_data:
-  redpanda_data:
-  minio_data:
-  keycloak_db_data:
   prometheus_data:
   grafana_data:
   loki_data:

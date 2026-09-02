@@ -1,10 +1,13 @@
-"""Task: budget optimization run - stub, B3.2."""
-
-from __future__ import annotations
+"""Task: budget optimization."""
 
 from crq.workers.celery_app import celery_app
+from crq.optimizer.knapsack import optimize_budget
+from crq.optimizer.rosi import compute_rosi
 
-
-@celery_app.task(name="crq.optimize_budget", bind=True)
-def optimize_budget(self: object, org_id: str, budget: float) -> dict[str, str]:
-    return {"status": "stub", "org_id": org_id}
+@celery_app.task(name="crq.optimize_budget")
+def optimize_budget_task(budget: float, actions: list[dict]) -> dict:
+    """Run knapsack budget optimizer in background."""
+    res = optimize_budget(actions, budget)
+    total_rosi = compute_rosi(res["total_eal_reduction"], res["total_cost"])
+    res["total_rosi"] = round(total_rosi, 2)
+    return res

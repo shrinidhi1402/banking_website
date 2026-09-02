@@ -14,7 +14,7 @@ class RiskSummaryResponse(BaseModel):
 
     scope: str = Field(description="'org', 'bu', or 'asset'")
     scope_id: uuid.UUID | None = Field(
-        default=None, description="ID of the scoped entity if applicable"
+        default=None, description="UUID of the scoped entity if applicable"
     )
     eal: float = Field(description="Expected Annual Loss in ₹ (INR)")
     var_95: float = Field(description="Value at Risk (95th percentile) in ₹")
@@ -32,7 +32,7 @@ class RiskSummaryResponse(BaseModel):
 class RiskContributorItem(BaseModel):
     """Individual contributor to overall organizational EAL."""
 
-    id: uuid.UUID | str
+    id: int | str
     name: str
     contributor_type: str = Field(description="'asset' or 'vulnerability'")
     eal_contribution: float

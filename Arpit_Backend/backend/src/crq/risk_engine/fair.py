@@ -1,5 +1,4 @@
-# STUB: replace with real B1.3 FAIR engine
-"""FAIR risk calculation engine stub (to be replaced by full B1.3 FAIR engine)."""
+"""FAIR risk calculation engine."""
 
 from __future__ import annotations
 
@@ -9,35 +8,57 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from crq.risk_engine.monte_carlo import run_simulation
+
 
 def compute_eal(
-    asset_id: uuid.UUID | str,
-    org_id: uuid.UUID | str,
+    asset_id: int | str,
+    org_id: int | str,
     criticality_score: int = 5,
     control_effectiveness: float = 0.8,
     active_vulns_count: int = 2,
     threat_frequency: float = 1.2,
 ) -> dict[str, Any]:
-    """Compute Expected Annual Loss (EAL) and VaR metrics (stub for B1.3).
-
-    Formula approximation:
-      LEF = Threat Event Frequency * (1.0 - control_effectiveness * 0.7) * (active_vulns_count * 0.5)
-      LM = Criticality * 1,000,000 INR (base loss magnitude)
-      EAL = LEF * LM
     """
-    # Deterministic calculation based on inputs
-    effective_vuln_factor = max(0.2, active_vulns_count * 0.4)
-    vuln_prob = max(0.05, min(0.99, (1.0 - (control_effectiveness * 0.8)) * effective_vuln_factor))
-    lef = threat_frequency * vuln_prob
-
-    primary_loss = criticality_score * 500_000.0
-    secondary_loss = criticality_score * 750_000.0
-    loss_magnitude = primary_loss + secondary_loss
-
-    calculated_eal = round(lef * loss_magnitude, 2)
-    var_95 = round(calculated_eal * 1.85, 2)
-    var_99 = round(calculated_eal * 2.40, 2)
-
+    Compute Expected Annual Loss (EAL) and VaR metrics using full Monte Carlo.
+    
+    Derives PERT distribution inputs dynamically from asset context:
+    - Threat Event Frequency (TEF) scales by threat_frequency
+    - Vulnerability (Susceptibility) inversely scales by control_effectiveness
+    - Loss Magnitude scales heavily by criticality_score
+    """
+    # 1. Threat Event Frequency (Events per year)
+    tef_min = max(0.1, threat_frequency * 0.5)
+    tef_mode = threat_frequency
+    tef_max = threat_frequency * 2.0
+    
+    # 2. Vulnerability (0.0 to 1.0 probability of success if attacked)
+    # Higher control effectiveness = lower vulnerability
+    base_vuln = 1.0 - control_effectiveness
+    # More open vulnerabilities = higher susceptibility multiplier
+    vuln_multiplier = 1.0 + (active_vulns_count * 0.1)
+    
+    vuln_mode = min(0.95, max(0.01, base_vuln * vuln_multiplier))
+    vuln_min = max(0.01, vuln_mode * 0.5)
+    vuln_max = min(0.99, vuln_mode * 1.5)
+    
+    # 3. Loss Magnitude (Financial impact)
+    # Scales non-linearly with criticality (1-10)
+    base_loss = (criticality_score ** 2) * 10_000.0  # E.g., crit 5 = 250k, crit 10 = 1M
+    
+    loss_min = base_loss * 0.5
+    loss_mode = base_loss
+    loss_max = base_loss * 2.5
+    
+    # Run 10,000 iteration Monte Carlo simulation
+    results = run_simulation(
+        tef_min, tef_mode, tef_max,
+        vuln_min, vuln_mode, vuln_max,
+        loss_min, loss_mode, loss_max,
+        iterations=10_000
+    )
+    
+    # Provenance hashing
     inputs = {
         "asset_id": str(asset_id),
         "org_id": str(org_id),
@@ -51,17 +72,11 @@ def compute_eal(
     return {
         "asset_id": str(asset_id),
         "org_id": str(org_id),
-        "eal": calculated_eal,
-        "var_95": var_95,
-        "var_99": var_99,
-        "loss_distribution": {
-            "p10": round(calculated_eal * 0.3, 2),
-            "p50": round(calculated_eal * 0.85, 2),
-            "p90": round(calculated_eal * 1.6, 2),
-            "p95": var_95,
-            "p99": var_99,
-        },
-        "calculation_version": "0.1.0-stub",
+        "eal": round(results["eal"], 2),
+        "var_95": round(results["var_95"], 2),
+        "var_99": round(results["var_99"], 2),
+        "loss_distribution": {k: round(v, 2) for k, v in results["loss_distribution"].items()},
+        "calculation_version": "1.0",
         "inputs_hash": inputs_hash,
         "computed_at": datetime.now(UTC),
     }

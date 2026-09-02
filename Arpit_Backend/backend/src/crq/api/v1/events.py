@@ -14,7 +14,7 @@ from crq.ingestion.connectors.base import BaseConnector
 from crq.ingestion.connectors.mock import MockConnector
 from crq.ingestion.connectors.qualys import QualysConnector
 from crq.ingestion.connectors.tenable import TenableConnector
-from crq.ingestion.producer import publish_event
+from crq.ingestion import pipeline
 from crq.models.event import IngestedEvent
 from crq.schemas.events import (
     BatchEventIngestRequest,
@@ -68,15 +68,20 @@ async def process_single_event(
     session.add(db_event)
     await session.flush()
 
-    # 3. Publish to Redpanda / Kafka topic
-    topic = await publish_event(event)
+    # 3. Process event directly (replaces Redpanda publish)
+    if event.event_type.startswith("control."):
+        await pipeline.handle_control_event(event, session)
+    elif event.event_type.startswith("vuln."):
+        await pipeline.handle_vuln_event(event, session)
+
+    db_event.processing_status = "processed"
 
     return EventIngestResponse(
         event_id=event.event_id,
         event_type=event.event_type,
         status="received",
-        topic=topic,
-        message="Event accepted and published to event bus",
+        topic="direct.sync",
+        message="Event accepted and processed synchronously",
         received_at=now,
     )
 

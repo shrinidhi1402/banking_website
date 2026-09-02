@@ -11,10 +11,9 @@ from pydantic import BaseModel, Field
 class VulnerabilityResponse(BaseModel):
     """Vulnerability catalog representation."""
 
-    id: uuid.UUID
+    id: int
     cve_id: str
     cvss_score: float | None = None
-    cvss_vector: str | None = None
     exploit_available: bool = False
     in_cisa_kev: bool = False
     epss_score: float | None = None

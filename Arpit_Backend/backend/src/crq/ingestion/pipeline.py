@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crq.core.logging import get_logger
 from crq.models.asset import Asset
-from crq.models.control import ControlAssessment
-from crq.models.risk import EALSnapshot
+from crq.models.control import ControlAssessment, Control
+from crq.models.risk import EalSnapshot
 from crq.notifications.ws_manager import ws_manager
 from crq.risk_engine.fair import compute_eal
 from crq.schemas.events import EventEnvelope
@@ -32,37 +32,43 @@ async def handle_control_event(
     """
     payload = event.payload
     control_key = payload.get("control", "mfa")
-    asset_id_str = payload.get("asset_id")
+    asset_id_val = payload.get("asset_id")
 
     log.info(
         "processing_control_event",
         event_id=str(event.event_id),
         control=control_key,
-        asset_id=asset_id_str,
+        asset_id=asset_id_val,
     )
 
     # 1. Determine asset
     asset: Asset | None = None
-    if asset_id_str:
+    if asset_id_val:
         try:
-            asset_uuid = uuid.UUID(asset_id_str)
-            asset_stmt = select(Asset).where(Asset.id == asset_uuid)
+            asset_id_int = int(asset_id_val)
+            asset_stmt = select(Asset).where(Asset.id == asset_id_int)
             res = await session.execute(asset_stmt)
             asset = res.scalar_one_or_none()
         except ValueError:
-            # Look up by name or external_id
+            # Look up by name or external_id or hostname
             asset_stmt = select(Asset).where(
-                (Asset.name == asset_id_str) | (Asset.external_id == asset_id_str)
+                (Asset.name == str(asset_id_val)) | 
+                (Asset.external_id == str(asset_id_val)) |
+                (Asset.hostname == str(asset_id_val))
             )
             res = await session.execute(asset_stmt)
             asset = res.scalar_one_or_none()
 
-    # If no asset found in DB, create/use mock asset representation
-    target_asset_id = asset.id if asset else uuid.uuid4()
+    target_asset_id = asset.id if asset else 1
     criticality = asset.criticality_score if asset else 9
 
+    # Look up control
+    control_stmt = select(Control).where(Control.key == control_key)
+    res = await session.execute(control_stmt)
+    control = res.scalar_one_or_none()
+    target_control_id = control.id if control else 1
+
     # 2. Control effectiveness calculation
-    # If control was disabled, effectiveness drops from e.g. 0.95 -> 0.05
     is_disabled = "disabled" in event.event_type or payload.get("status") == "disabled"
     coverage = 0.0 if is_disabled else float(payload.get("coverage_pct", 95.0))
     quality = 0.0 if is_disabled else float(payload.get("config_quality", 0.95))
@@ -71,7 +77,7 @@ async def handle_control_event(
     # Record control assessment
     assessment = ControlAssessment(
         asset_id=target_asset_id,
-        control_id=uuid.uuid4(),  # placeholder control uuid
+        control_id=target_control_id,
         coverage_pct=coverage,
         config_quality=quality,
         freshness_days=0,
@@ -108,16 +114,25 @@ async def handle_vuln_event(
     payload = event.payload
     cve_id = payload.get("cve_id", "CVE-UNKNOWN")
     cvss_score = float(payload.get("cvss_score", 7.5))
-    asset_id_str = payload.get("asset_id")
+    asset_id_val = payload.get("asset_id")
 
     log.info("processing_vuln_event", cve_id=cve_id, cvss=cvss_score)
 
-    target_asset_id = uuid.uuid4()
-    if asset_id_str:
+    target_asset_id = 1
+    if asset_id_val:
         try:
-            target_asset_id = uuid.UUID(asset_id_str)
+            target_asset_id = int(asset_id_val)
         except ValueError:
-            pass
+            # Look up by name or external_id
+            asset_stmt = select(Asset).where(
+                (Asset.name == str(asset_id_val)) | 
+                (Asset.external_id == str(asset_id_val)) |
+                (Asset.hostname == str(asset_id_val))
+            )
+            res = await session.execute(asset_stmt)
+            asset = res.scalar_one_or_none()
+            if asset:
+                target_asset_id = asset.id
 
     # Recompute EAL with higher vuln count / threat
     eal_result = await handle_risk_recompute(
@@ -139,8 +154,8 @@ async def handle_vuln_event(
 
 
 async def handle_risk_recompute(
-    asset_id: uuid.UUID,
-    org_id: uuid.UUID,
+    asset_id: int,
+    org_id: int,
     criticality_score: int = 7,
     control_effectiveness: float = 0.8,
     active_vulns_count: int = 2,
@@ -152,9 +167,9 @@ async def handle_risk_recompute(
     previous_eal = 42_000_000.0  # default baseline
     if session is not None:
         last_snap_stmt = (
-            select(EALSnapshot)
-            .where(EALSnapshot.org_id == org_id)
-            .order_by(desc(EALSnapshot.computed_at))
+            select(EalSnapshot)
+            .where(EalSnapshot.org_id == org_id)
+            .order_by(desc(EalSnapshot.computed_at))
             .limit(1)
         )
         snap_res = await session.execute(last_snap_stmt)
@@ -174,10 +189,20 @@ async def handle_risk_recompute(
 
     # 3. Persist new EAL snapshot
     now = datetime.now(UTC)
-    snapshot = EALSnapshot(
+    
+    # We must fetch the asset UUID to satisfy scope_id=UUID constraint
+    asset_uuid = uuid.uuid4()
+    if session is not None:
+        asset_stmt = select(Asset).where(Asset.id == asset_id)
+        res = await session.execute(asset_stmt)
+        asset = res.scalar_one_or_none()
+        if asset:
+            asset_uuid = asset.uuid
+
+    snapshot = EalSnapshot(
         org_id=org_id,
         scope="asset",
-        scope_id=asset_id,
+        scope_id=asset_uuid,
         eal=new_eal,
         var_95=computed["var_95"],
         var_99=computed["var_99"],
@@ -211,7 +236,7 @@ async def handle_risk_recompute(
     invalidation_message = {
         "topic": "eal.updated" if not threshold_alert else "risk.alert",
         "scope": "asset",
-        "scope_id": str(asset_id),
+        "scope_id": str(asset_uuid),
         "org_id": str(org_id),
         "previous_eal": previous_eal,
         "new_eal": new_eal,
@@ -219,7 +244,7 @@ async def handle_risk_recompute(
         "threshold_alert": threshold_alert,
         "timestamp": now.isoformat(),
     }
-    await ws_manager.broadcast_to_org(org_id=org_id, message=invalidation_message)
+    await ws_manager.broadcast_to_org(org_id=str(org_id), message=invalidation_message)
 
     return {
         "asset_id": str(asset_id),

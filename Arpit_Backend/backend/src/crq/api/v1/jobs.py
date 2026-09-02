@@ -45,7 +45,7 @@ class JobStatusResponse(BaseModel):
     summary="Trigger full portfolio EAL recompute job",
 )
 async def trigger_portfolio_recompute(
-    org_id: uuid.UUID = Query(default=uuid.UUID("00000000-0000-0000-0000-000000000001")),
+    org_id: int = Query(default=1),
 ) -> JobSubmitResponse:
     """Submit an asynchronous Celery job to recompute portfolio-wide EAL."""
     try:

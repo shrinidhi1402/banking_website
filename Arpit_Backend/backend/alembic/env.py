@@ -1,4 +1,4 @@
-﻿"""Alembic environment - configured for async SQLAlchemy 2.0.
+"""Alembic environment - configured for async SQLAlchemy 2.0.
 
 Run migrations:
     alembic upgrade head
@@ -10,8 +10,11 @@ NOTE: Uses DATABASE_URL_DIRECT (bypasses PgBouncer) for migrations.
 """
 from __future__ import annotations
 
-import asyncio
-from logging.config import fileConfig
+"""Alembic migrations.
+WARNING: ALEMBIC IS DISABLED IN FAVOR OF MANUAL SQL.
+All schema changes are tracked as raw SQL scripts in the `supabase/` directory at the project root.
+Do not run `alembic upgrade head`. Execute scripts in the Supabase SQL Editor manually.
+"""
 
 from alembic import context
 from sqlalchemy import pool

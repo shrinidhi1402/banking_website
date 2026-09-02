@@ -5,11 +5,10 @@ B0.2 — Database bootstrap.
 Architecture §6.1:
   - SQLAlchemy 2.0 async engine
   - Session yielded as a FastAPI dependency via get_db()
-  - App connects via PgBouncer (transaction-mode pooling) in prod
-  - Alembic uses DATABASE_URL_DIRECT (bypasses PgBouncer)
+  - App connects via Supabase Transaction Pooler
+  - Alembic is disabled (manual migrations in supabase/ folder)
 
-Security §10.2 — app connects as `crq_app` non-superuser role,
-scoped only to the `crq` schema. Never as `postgres`.
+Security §10.2 — App connects to Supabase instance.
 """
 
 from __future__ import annotations
@@ -32,10 +31,11 @@ settings = get_settings()
 # Engine — created once at module import time
 # ---------------------------------------------------------------------------
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.SUPABASE_URL,
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_pre_ping=settings.DB_POOL_PRE_PING,
+    connect_args={"statement_cache_size": 0},  # Required for Supabase transaction pooler
     # echo=settings.DEBUG,  # Uncomment to log SQL in dev
 )
 

@@ -1,60 +1,43 @@
-# STUB: replace with real B1.1 model
-"""Control and ControlAssessment models (stub for B1.1)."""
+"""Control and Assessment models."""
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
 
-from crq.models.base import AuditMixin, Base
+from crq.models.base import Base, IdMixin, TimestampMixin, UuidMixin
 
-JsonType = JSON().with_variant(JSONB, "postgresql")
+if TYPE_CHECKING:
+    from crq.models.asset import Asset
 
 
-class Control(AuditMixin, Base):
-    """Control catalog model."""
+class Control(IdMixin, UuidMixin, TimestampMixin, Base):
+    """Control model mapping to crq_controls."""
+    __tablename__ = "crq_controls"
 
-    __tablename__ = "controls"
-
-    key: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    framework_refs: Mapped[dict[str, Any] | None] = mapped_column(JsonType, default=dict)
-
-    assessments: Mapped[list[ControlAssessment]] = relationship(
-        "ControlAssessment", back_populates="control"
-    )
+    control_type: Mapped[str] = mapped_column(String, nullable=False)
+    family: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
-class ControlAssessment(AuditMixin, Base):
-    """Control assessment per asset."""
+class ControlAssessment(IdMixin, Base):
+    """Assessment of a control on a specific asset."""
+    __tablename__ = "crq_control_assessments"
 
-    __tablename__ = "control_assessments"
-
-    asset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    control_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("controls.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    coverage_pct: Mapped[float] = mapped_column(Numeric(5, 2), default=100.0)  # 0-100
-    config_quality: Mapped[float] = mapped_column(Numeric(4, 3), default=1.0)  # 0.0 - 1.0
+    asset_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crq_assets.id", ondelete="CASCADE"), nullable=False)
+    control_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crq_controls.id"), nullable=False)
+    
+    coverage_pct: Mapped[float] = mapped_column(Numeric, default=0)
+    config_quality: Mapped[float] = mapped_column(Numeric, default=1.0)
     freshness_days: Mapped[int] = mapped_column(Integer, default=0)
-    effectiveness: Mapped[float] = mapped_column(
-        Numeric(5, 4), default=1.0
-    )  # computed: coverage * quality * decay
-    assessed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
-    )
+    effectiveness: Mapped[float] = mapped_column(Numeric, default=0)
+    
+    assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    asset: Mapped[Any] = relationship("Asset", back_populates="control_assessments")
-    control: Mapped[Control] = relationship("Control", back_populates="assessments")
+    asset: Mapped[Asset] = relationship("Asset", back_populates="control_assessments")
+    control: Mapped[Control] = relationship("Control")

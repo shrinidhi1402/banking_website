@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import uuid
+from jose import JWTError, jwt
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
@@ -19,7 +19,7 @@ router = APIRouter()
 @router.websocket("/ws/updates")
 async def websocket_updates_endpoint(
     websocket: WebSocket,
-    org_id: uuid.UUID = Query(default=uuid.UUID("00000000-0000-0000-0000-000000000001")),
+    org_id: str = Query(default="1"),
     token: str | None = Query(default=None),
 ) -> None:
     """Real-time invalidation signaling WebSocket channel (WS /ws/updates).
@@ -29,9 +29,21 @@ async def websocket_updates_endpoint(
     settings = get_settings()
 
     # 1. Auth check (respecting DISABLE_AUTH dev flag)
-    if not settings.DISABLE_AUTH and not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing auth token")
-        return
+    if not settings.DISABLE_AUTH:
+        if not token:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing auth token")
+            return
+        try:
+            jwt.decode(
+                token,
+                settings.SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+        except JWTError as e:
+            log.warning("websocket_jwt_validation_failed", error=str(e))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+            return
 
     # 2. Connect client to org channel
     await ws_manager.connect(websocket, org_id)
@@ -42,7 +54,7 @@ async def websocket_updates_endpoint(
             json.dumps(
                 {
                     "type": "connected",
-                    "org_id": str(org_id),
+                    "org_id": org_id,
                     "message": "Subscribed to CRQ real-time invalidation stream",
                 }
             )

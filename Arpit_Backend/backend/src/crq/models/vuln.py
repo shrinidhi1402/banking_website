@@ -1,65 +1,49 @@
-# STUB: replace with real B1.1 model
-"""Vulnerability and AssetVulnerability models (stub for B1.1)."""
+"""Vulnerability models."""
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
 
-from crq.models.base import AuditMixin, Base
+from crq.models.base import Base, IdMixin, TimestampMixin
 
-JsonType = JSON().with_variant(JSONB, "postgresql")
+if TYPE_CHECKING:
+    from crq.models.asset import Asset
 
 
-class Vulnerability(AuditMixin, Base):
-    """Vulnerability catalog model."""
+class Vulnerability(IdMixin, TimestampMixin, Base):
+    """Global vulnerability model mapping to crq_vulnerabilities."""
+    __tablename__ = "crq_vulnerabilities"
 
-    __tablename__ = "vulnerabilities"
-
-    cve_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    cvss_score: Mapped[float | None] = mapped_column(Numeric(4, 2), nullable=True)
-    cvss_vector: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    exploit_available: Mapped[bool] = mapped_column(Boolean, default=False)
-    in_cisa_kev: Mapped[bool] = mapped_column(Boolean, default=False)
-    epss_score: Mapped[float | None] = mapped_column(Numeric(6, 4), nullable=True)
+    cve_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cvss_score: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    epss_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    in_cisa_kev: Mapped[bool] = mapped_column(Boolean, default=False)
+    exploit_available: Mapped[bool] = mapped_column(Boolean, default=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    meta_info: Mapped[dict[str, Any] | None] = mapped_column(JsonType, default=dict)
 
-    asset_findings: Mapped[list[AssetVulnerability]] = relationship(
-        "AssetVulnerability", back_populates="vulnerability"
+    asset_links: Mapped[list[AssetVulnerability]] = relationship(
+        "AssetVulnerability", back_populates="vulnerability", cascade="all, delete-orphan"
     )
 
 
-class AssetVulnerability(AuditMixin, Base):
-    """Asset vulnerability finding junction model."""
+class AssetVulnerability(IdMixin, Base):
+    """Mapping of vulnerability to specific asset."""
+    __tablename__ = "crq_asset_vulnerabilities"
 
-    __tablename__ = "asset_vulnerabilities"
+    asset_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crq_assets.id", ondelete="CASCADE"), nullable=False)
+    vulnerability_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crq_vulnerabilities.id", ondelete="CASCADE"), nullable=False)
+    
+    status: Mapped[str] = mapped_column(String, default="open")
+    
+    first_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    eal_contribution: Mapped[float] = mapped_column(Numeric, default=0)
 
-    asset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    vulnerability_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("vulnerabilities.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    scanner_source: Mapped[str | None] = mapped_column(String(100), default="manual")
-    status: Mapped[str] = mapped_column(
-        String(50), default="open"
-    )  # open, mitigating, resolved, accepted_risk
-    eal_contribution: Mapped[float | None] = mapped_column(Numeric(14, 2), default=0.0)
-
-    asset: Mapped[Any] = relationship("Asset", back_populates="vulnerabilities")
-    vulnerability: Mapped[Vulnerability] = relationship(
-        "Vulnerability", back_populates="asset_findings"
-    )
+    asset: Mapped[Asset] = relationship("Asset", back_populates="vulnerabilities")
+    vulnerability: Mapped[Vulnerability] = relationship("Vulnerability", back_populates="asset_links")

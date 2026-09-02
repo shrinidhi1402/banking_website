@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 class AssetResponse(BaseModel):
     """Asset representation schema."""
 
-    id: uuid.UUID
-    org_id: uuid.UUID
-    business_unit_id: uuid.UUID | None = None
+    id: int
+    org_id: int
+    business_unit_id: int | None = None
     external_id: str | None = None
     name: str
     hostname: str | None = None
@@ -31,9 +31,9 @@ class AssetResponse(BaseModel):
 class AssetCreateRequest(BaseModel):
     """Asset creation payload."""
 
-    org_id: uuid.UUID
+    org_id: int
     name: str
-    business_unit_id: uuid.UUID | None = None
+    business_unit_id: int | None = None
     hostname: str | None = None
     asset_type: str = "server"
     environment: str = "prod"

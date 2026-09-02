@@ -1,39 +1,32 @@
-# STUB: replace with real B1.1 model
-"""AuditLog model (stub for B1.1)."""
+"""Audit log model."""
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.types import JSON
 
-from crq.models.base import Base
-
-JsonType = JSON().with_variant(JSONB, "postgresql")
+from crq.models.base import Base, IdMixin
 
 
-class AuditLog(Base):
-    """Immutable audit trail model."""
+class AuditLog(IdMixin, Base):
+    """Audit log entry mapped to crq_audit_log."""
+    __tablename__ = "crq_audit_log"
 
-    __tablename__ = "audit_log"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
-    correlation_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True, index=True
-    )
-    actor_type: Mapped[str] = mapped_column(String(50), default="user")  # user, system, connector
-    actor_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
-    resource_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    before_state: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
-    after_state: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
-    )
+    correlation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    org_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crq_organizations.id"), nullable=True)
+    
+    actor_type: Mapped[str] = mapped_column(String, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    
+    before_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    after_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

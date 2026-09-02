@@ -1,10 +1,27 @@
-"""NL query endpoint - stub, implemented in B4.3."""
+"""Natural Language Query API."""
 
 from fastapi import APIRouter
+from pydantic import BaseModel
+
+from crq.core.db import DbSession
+from crq.ai_gateway.pipeline import orchestrate_query
 
 router = APIRouter()
 
+class QueryRequest(BaseModel):
+    query: str
 
-@router.post("", summary="Natural language query (stub)")
-async def nl_query() -> dict[str, str]:
-    return {"status": "stub", "message": "Implemented in Phase B4.3"}
+class QueryResponse(BaseModel):
+    answer: str
+    context: dict
+    plan: dict | None = None
+
+@router.post("", response_model=QueryResponse)
+async def ask_question(req: QueryRequest, session: DbSession) -> QueryResponse:
+    """Submit a natural language question to the CRQ AI."""
+    res = await orchestrate_query(req.query, session)
+    return QueryResponse(
+        answer=res.get("answer", ""),
+        context=res.get("context", {}),
+        plan=res.get("plan")
+    )
