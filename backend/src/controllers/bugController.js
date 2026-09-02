@@ -25,6 +25,7 @@ import { getBugFlags, isBugEnabled, toggleBugFlag } from '../config/bugFlags.js'
 import { supabaseAdmin } from '../config/supabase.js'
 import { getPgPool } from '../config/pgClient.js'
 import { ApiError } from '../utils/errors.js'
+import { emitCRQEvent } from '../services/crqClient.js'
 
 // ─── Flag Management ──────────────────────────────────────────────────────────
 
@@ -49,6 +50,25 @@ export function toggle(req, res, next) {
     if (!validFlags.includes(flag)) throw new ApiError(400, `Invalid flag. Must be one of: ${validFlags.join(', ')}`)
     const newState = toggleBugFlag(flag)
     console.log(`[BugLab] ${flag} toggled → ${newState ? 'ON ⚠' : 'OFF ✓'} by Manager ${req.auth?.profile?.email}`)
+
+    // --- CRQ Event Emission ---
+    // Fire and forget CRQ event based on flag toggle
+    try {
+      if (flag === 'BUG_MFA') {
+        const eventType = newState ? 'control.disabled' : 'control.enabled';
+        emitCRQEvent(eventType, { control: "mfa", account_id: "admin-all", asset_id: "core-banking-db" });
+      } else if (flag === 'BUG_SQLI') {
+        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
+        emitCRQEvent(eventType, { vulnerability_id: "BUG_SQLI", cve_id_or_description: "SQL Injection in customer search", asset_id: "bank-api", severity: "CRITICAL" });
+      } else if (flag === 'BUG_IDOR') {
+        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
+        emitCRQEvent(eventType, { vulnerability_id: "BUG_IDOR", cve_id_or_description: "Broken Access Control (IDOR) on accounts", asset_id: "bank-api", severity: "HIGH" });
+      }
+    } catch (err) {
+      console.error("[BugLab] Error emitting CRQ event:", err);
+    }
+    // --------------------------
+
     res.json({ flag, enabled: newState, flags: getBugFlags() })
   } catch (e) { next(e) }
 }
@@ -164,6 +184,18 @@ export async function triggerMfaBypass(req, res, next) {
       description: `Login from new device/location: IP ${suspiciousIp}, agent: ${attackerAgent}. Previous logins used: ${normalAgent}`,
       ip_address: suspiciousIp,
     })
+
+    // --- CRQ Event Emission ---
+    try {
+      emitCRQEvent('incident.detected', {
+        type: 'ACCOUNT_TAKEOVER_SIMULATION',
+        asset_id: `user-account-${targetUser.id}`,
+        details: `Simulated attack on ${targetUser.email}`
+      });
+    } catch (err) {
+      console.error("[BugLab] Error emitting CRQ event:", err);
+    }
+    // --------------------------
 
     res.json({
       success: true,

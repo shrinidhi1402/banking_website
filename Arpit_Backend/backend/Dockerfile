@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 # ============================================================
 # Stage 1: builder — install deps into a venv
 # ============================================================
@@ -10,6 +10,7 @@ WORKDIR /build
 RUN pip install --no-cache-dir uv==0.4.10
 
 COPY pyproject.toml .
+COPY README.md .
 COPY src/ src/
 
 # Create venv and install prod deps only

@@ -45,19 +45,19 @@ services:
   # App connects via pgbouncer:5432, not postgres directly.
   # ============================================================
   pgbouncer:
-    image: bitnami/pgbouncer:1.23.1
+    image: edoburu/pgbouncer:latest
     container_name: crq-pgbouncer
     restart: unless-stopped
     environment:
-      POSTGRESQL_HOST: postgres
-      POSTGRESQL_PORT: 5432
-      POSTGRESQL_USERNAME: crq_app
-      POSTGRESQL_PASSWORD: crq_app_password
-      POSTGRESQL_DATABASE: crq
-      PGBOUNCER_DATABASE: crq
-      PGBOUNCER_POOL_MODE: transaction
-      PGBOUNCER_MAX_CLIENT_CONN: "200"
-      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: crq_app
+      DB_PASSWORD: crq_app_password
+      DB_NAME: crq
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: plain
     ports:
       - "5432:5432"
     depends_on:

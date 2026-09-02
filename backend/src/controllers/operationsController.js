@@ -5,6 +5,7 @@ import { recordAudit, recordSecurity } from '../middleware/telemetry.js'
 import { getOne, getRows, updateOne } from '../services/dataService.js'
 import { isBugEnabled } from '../config/bugFlags.js'
 import { z } from 'zod'
+import { emitCRQEvent } from '../services/crqClient.js'
 
 // Shorthand: integer user id from the application users table
 const uid = (req) => req.auth.profile.id
@@ -217,6 +218,20 @@ export async function createEmployee(req, res, next) {
     }).select().single()
     assertNoDatabaseError(profileError, 'Employee profile could not be created')
     await recordAudit(req, 'CREATE_EMPLOYEE', 'employee_profiles', employee.id)
+    
+    // --- CRQ Event Emission ---
+    try {
+      emitCRQEvent('asset.added', {
+        asset_id: `emp-${userRow.id}`,
+        name: name ?? email,
+        criticality: "MEDIUM",
+        type: "employee_account"
+      });
+    } catch (err) {
+      console.error("[CRQ Client] Error emitting event:", err);
+    }
+    // --------------------------
+
     res.status(201).json(employee)
   } catch (e) { next(e) }
 }
@@ -284,6 +299,19 @@ export async function createCustomer(req, res, next) {
       status: 'ACTIVE'
     })
     if (accError) throw new Error('Failed to create account.')
+
+    // --- CRQ Event Emission ---
+    try {
+      emitCRQEvent('asset.added', {
+        asset_id: `cus-${dbUserId}`,
+        name: input.name,
+        criticality: "LOW",
+        type: "customer_account"
+      });
+    } catch (err) {
+      console.error("[CRQ Client] Error emitting event:", err);
+    }
+    // --------------------------
 
     res.status(201).json({ message: 'Customer created successfully' })
   } catch (error) {
