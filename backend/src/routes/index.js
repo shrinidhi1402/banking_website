@@ -31,15 +31,19 @@ const bugRouter = Router()
 // Phase 4 – Insider Threat (Requires EMPLOYEE or MANAGER role)
 bugRouter.get('/insider-threat', requireRole('EMPLOYEE', 'MANAGER'), bugs.insiderThreat)
 
+// Phase 5 – Client-Side Secret Exposure (Accessible to all authenticated roles)
+bugRouter.get('/secret', bugs.secretExposure)
+
+// Flags state (Accessible to all authenticated roles for client-side simulations)
+bugRouter.get('/flags', bugs.getFlags)
+
 // Phase 0-3 – Flag management and simulations (Manager only)
 const managerBugRouter = Router(); managerBugRouter.use(requireRole('MANAGER'))
-managerBugRouter.get('/flags',                bugs.getFlags)
 managerBugRouter.post('/toggle',              bugs.toggle)
 managerBugRouter.post('/trigger/mfa-bypass',  bugs.triggerMfaBypass)
 managerBugRouter.post('/search',              bugs.sqlSearch)
 managerBugRouter.get('/account',              bugs.idorAccount)
 managerBugRouter.get('/accounts/list',        bugs.idorListAccounts)
-
 bugRouter.use(managerBugRouter)
 router.use('/bugs', bugRouter)
 

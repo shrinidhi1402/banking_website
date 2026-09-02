@@ -92,6 +92,41 @@ export default function App() {
   const [employeeData, setEmployeeData] = useState({ dashboard: [], customers: [], transactions: [], requests: [], profile: null, loading: true })
   const [managerData,  setManagerData]  = useState({ dashboard: null, customers: [], employees: [], transactions: [], requests: [], suspiciousTransactions: [], securityEvents: [], reports: null, profile: null, loading: true })
 
+  // ── Exposure Path A+B: BUG_SECRET_EXPOSURE global object + lazy module ───────
+  // Kept at App root so it is never affected by tab-level component unmounts.
+  // Does NOT use, read, or expose any real credential, token, or env variable.
+  const [bugSecretExposure, setBugSecretExposure] = useState(false)
+
+  // ── Global Vulnerability State ───────────────────────────────────────────────
+  // Fetch flag state for ANY authenticated role so the vulnerability is global
+  useEffect(() => {
+    if (!session?.access_token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBugSecretExposure(false)
+      return
+    }
+    apiGet('/bugs/flags', session.access_token)
+      .then(d => {
+        setBugSecretExposure(!!d.flags.BUG_SECRET_EXPOSURE)
+      })
+      .catch(e => console.error('Failed to fetch bug flags', e))
+  }, [session])
+
+  useEffect(() => {
+    if (!bugSecretExposure) {
+      delete window.__BUGLAB_SECRET__
+      return
+    }
+    // *** FAKE CREDENTIAL ONLY — NOT A REAL KEY ***
+    // Intentionally non-functional. Exists solely for CWE-798 BugLab simulation.
+    window.__BUGLAB_SECRET__ = {
+      FAKE_SUPABASE_SERVICE_ROLE_KEY: 'BUGLAB_FAKE_ONLY_NOT_A_REAL_CREDENTIAL',
+      flag: 'FLAG{CLIENT_SIDE_SECRET_EXPOSURE}',
+      _meta: { phase: 5, cwe: 'CWE-798', vulnerability: 'Client-Side Secret Exposure' },
+    }
+    import('./buglabSecret.js').catch(() => {})
+  }, [bugSecretExposure])
+
   const refreshCustomerData = useCallback(async () => {
     if (!session || session.user?.role !== 'CUSTOMER') return
     setCustomerData(prev => ({ ...prev, loading: true }))
@@ -283,7 +318,7 @@ export default function App() {
           )}
           {active === 'Overview'
             ? <Dashboard roleKey={roleKey} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} />
-            : <WorkspacePage active={active} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} session={session} refresh={refreshCustomerData} refreshEmployee={refreshEmployeeData} refreshManager={refreshManagerData} />}
+            : <WorkspacePage active={active} action={action} customerData={customerData} employeeData={employeeData} managerData={managerData} session={session} refresh={refreshCustomerData} refreshEmployee={refreshEmployeeData} refreshManager={refreshManagerData} onSecretFlagChange={setBugSecretExposure} />}
         </div>
       </main>
     </div>
@@ -634,7 +669,7 @@ function Dashboard({ roleKey, action, customerData, employeeData, managerData })
 }
 
 // ─── Workspace page ────────────────────────────────────────────────────────────
-function WorkspacePage({ active, action, customerData, employeeData, managerData, session, refresh, refreshEmployee, refreshManager }) {
+function WorkspacePage({ active, action, customerData, employeeData, managerData, session, refresh, refreshEmployee, refreshManager, onSecretFlagChange }) {
   const titles = {
     'Transfer money': ['Send money securely', 'Move money to a saved beneficiary or a new account.'],
     Beneficiaries:   ['Your beneficiaries', 'Manage the people and businesses you send money to.'],
@@ -666,10 +701,10 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
   else if (active === 'Profile'    && isCust)            Content = <ProfileForm action={action} customerData={customerData} session={session} refresh={refresh} />
   else if (active === 'Profile'    && isEmp)             Content = <ProfileForm action={action} employeeData={employeeData} session={session} refresh={refreshEmployee} />
   else if (active === 'Profile'    && isMgr)             Content = <ManagerProfileForm action={action} managerData={managerData} session={session} refresh={refreshManager} />
-  else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} />
+  else if (active === 'Security'   && isMgr)             Content = <ManagerSecurityPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} onSecretFlagChange={onSecretFlagChange} />
   else if (active === 'Security')                        Content = <PasswordForm action={action} session={session} />
   else if (active === 'Reports'    && isMgr)             Content = <ManagerReportsPanel action={action} managerData={managerData} />
-  else if (active === 'Bug Lab'    && isMgr)             Content = <BugLabPanel session={session} action={action} />
+  else if (active === 'Bug Lab'    && isMgr)             Content = <BugLabPanel session={session} action={action} onSecretFlagChange={onSecretFlagChange} />
   else if (active === 'Insider Threat' && isEmp)         Content = <InsiderThreatPanel action={action} session={session} />
   else Content = <GenericPanel active={active} action={action} employeeData={employeeData} />
 
@@ -857,26 +892,35 @@ function ManagerRequestsPanel({ action, managerData, session, refreshManager }) 
 
 // ─── Manager Security Panel ───────────────────────────────────────────────────
 // Shows the live security event log AND the vulnerability control toggles.
-function ManagerSecurityPanel({ action, managerData, session, refreshManager }) {
+function ManagerSecurityPanel({ action, managerData, session, refreshManager, onSecretFlagChange }) {
   const events = managerData?.securityEvents || []
   const token = session?.access_token
 
-  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false })
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false })
   const [flagsLoaded, setFlagsLoaded] = useState(false)
   const [toggling, setToggling] = useState(null)
 
   useEffect(() => {
     if (!token) return
     apiGet('/bugs/flags', token)
-      .then(d => { setFlags(d.flags); setFlagsLoaded(true) })
+      .then(d => {
+        setFlags(d.flags)
+        setFlagsLoaded(true)
+        // Propagate the loaded state up to App root for window injection
+        if (onSecretFlagChange) onSecretFlagChange(!!d.flags.BUG_SECRET_EXPOSURE)
+      })
       .catch(() => setFlagsLoaded(true))
-  }, [token])
+  }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleToggle(flag) {
     setToggling(flag)
     try {
       const d = await apiPost('/bugs/toggle', { flag }, token)
       setFlags(d.flags)
+      // Propagate BUG_SECRET_EXPOSURE change up to App root for window injection
+      if (flag === 'BUG_SECRET_EXPOSURE' && onSecretFlagChange) {
+        onSecretFlagChange(!!d.flags.BUG_SECRET_EXPOSURE)
+      }
       // Refresh security events so new events from the toggle appear
       if (refreshManager) await refreshManager()
       action(`Vulnerability ${flag} ${d.enabled ? 'activated' : 'deactivated'}`)
@@ -887,11 +931,13 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager }) 
     }
   }
 
+
   const vulnMeta = [
-    { flag: 'BUG_MFA',  label: 'MFA Bypass',          risk: 'CRITICAL', cwe: 'CWE-308', detail: 'Disables OTP step on login. All accounts become single-factor.' },
-    { flag: 'BUG_SQLI', label: 'SQL Injection',        risk: 'HIGH',     cwe: 'CWE-89',  detail: 'Customer search accepts unsanitized input. Filter injection possible.' },
-    { flag: 'BUG_IDOR', label: 'Broken Access Control',risk: 'HIGH',     cwe: 'CWE-639', detail: 'Account endpoint skips ownership check. Any account ID accessible.' },
+    { flag: 'BUG_MFA',  label: 'MFA Bypass',                   risk: 'CRITICAL', cwe: 'CWE-308', detail: 'Disables OTP step on login. All accounts become single-factor.' },
+    { flag: 'BUG_SQLI', label: 'SQL Injection',                risk: 'HIGH',     cwe: 'CWE-89',  detail: 'Customer search accepts unsanitized input. Filter injection possible.' },
+    { flag: 'BUG_IDOR', label: 'Broken Access Control',        risk: 'HIGH',     cwe: 'CWE-639', detail: 'Account endpoint skips ownership check. Any account ID accessible.' },
     { flag: 'BUG_EXCESSIVE_PRIVILEGES', label: 'Excessive Privileges', risk: 'HIGH', cwe: 'CWE-269', detail: 'Simulates an employee having excessive permissions to sensitive banking data.' },
+    { flag: 'BUG_SECRET_EXPOSURE', label: 'Client-Side Secret Exposure', risk: 'CRITICAL', cwe: 'CWE-798', detail: 'Sensitive configuration is exposed to the client. Browser inspection may reveal a privileged-looking credential.' },
   ]
   const riskCol = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
 
@@ -912,9 +958,9 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager }) 
             <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '1px' }}>Risk Assessment Platform · Activate to simulate real attack surface</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES].filter(Boolean).length > 0 && (
+            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES, flags.BUG_SECRET_EXPOSURE].filter(Boolean).length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', color: '#ff4757', fontSize: '11px', fontWeight: 700 }}>
-                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES].filter(Boolean).length} ACTIVE
+                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES, flags.BUG_SECRET_EXPOSURE].filter(Boolean).length} ACTIVE
               </span>
             )}
           </div>
@@ -1503,12 +1549,11 @@ function GenericPanel({ active, action, employeeData, session, refreshEmployee }
 
 // ─── Bug Lab Panel ─────────────────────────────────────────────────────────────
 // Phase 1 + 2 + 3 vulnerability simulation controls. MANAGER ONLY.
-// eslint-disable-next-line no-unused-vars
-function BugLabPanel({ session, action }) {
+function BugLabPanel({ session, action, onSecretFlagChange }) {
   const token = session?.access_token
 
   // Flags state
-  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false })
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false })
   const [flagsLoading, setFlagsLoading] = useState(true)
 
   // Phase 1 state
@@ -1553,6 +1598,9 @@ function BugLabPanel({ session, action }) {
     try {
       const data = await apiPost('/bugs/toggle', { flag }, token)
       setFlags(data.flags)
+      if (flag === 'BUG_SECRET_EXPOSURE' && onSecretFlagChange) {
+        onSecretFlagChange(!!data.flags.BUG_SECRET_EXPOSURE)
+      }
       action(`${flag} ${data.enabled ? 'ENABLED ⚠' : 'disabled ✓'}`)
     } catch (e) {
       action(e.message || 'Toggle failed')
@@ -1651,6 +1699,14 @@ function BugLabPanel({ session, action }) {
       description: 'Simulates an employee having excessive permissions to sensitive banking data. When enabled, employees can execute unauthorized queries to access data outside their normal role boundaries.',
       cve: 'CWE-269: Improper Privilege Management',
     },
+    {
+      flag: 'BUG_SECRET_EXPOSURE',
+      phase: 5,
+      title: 'Client-Side Secret Exposure',
+      risk: 'CRITICAL',
+      description: 'When enabled, a fake client-side credential is intentionally exposed through browser-accessible application resources. The vulnerability demonstrates how secrets embedded in client-side code can be discovered through browser inspection.',
+      cve: 'CWE-798: Use of Hard-coded Password',
+    },
   ]
 
   const riskColor = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
@@ -1679,7 +1735,7 @@ function BugLabPanel({ session, action }) {
           Each toggle activates a real, exploitable vulnerability in this banking platform. Use the interactive panels below to trigger and observe each attack. All events are logged to the Security panel for risk scoring.
         </p>
         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
-          {['Northstar Risk Engine v2.1', '3 Vulnerabilities Loaded', 'All Events Logged', 'Manager Auth Required'].map(tag => (
+          {['Northstar Risk Engine v2.1', '5 Vulnerabilities Loaded', 'All Events Logged', 'Manager Auth Required'].map(tag => (
             <span key={tag} style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', fontSize: '11px', border: '1px solid rgba(255,255,255,0.1)' }}>{tag}</span>
           ))}
         </div>
@@ -2045,6 +2101,26 @@ function BugLabPanel({ session, action }) {
                 {!flags['BUG_EXCESSIVE_PRIVILEGES'] && (
                   <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
                     ✓ Bug is disabled. Employees are restricted to their normal bounds.
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Phase 5 controls */}
+            {b.phase === 5 && (
+              <div>
+                <div style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test Client-Side Secret Exposure:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Open your browser's Developer Tools (F12)</li>
+                    <li>Go to the <strong>Console</strong> tab and type <code>window.__BUGLAB_SECRET__</code></li>
+                    <li>Go to the <strong>Network</strong> tab and look for the dynamically loaded <code>buglabSecret</code> JS chunk</li>
+                    <li>Observe the intentionally exposed fake Supabase key and flag</li>
+                  </ol>
+                </div>
+                {!flags['BUG_SECRET_EXPOSURE'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. The client-side payload and secret object are completely removed from the browser.
                   </div>
                 )}
               </div>

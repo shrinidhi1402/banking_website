@@ -45,7 +45,7 @@ export function toggle(req, res, next) {
   try {
     const { flag } = req.body
     if (!flag) throw new ApiError(400, 'flag is required')
-    const validFlags = ['BUG_MFA', 'BUG_SQLI', 'BUG_IDOR', 'BUG_EXCESSIVE_PRIVILEGES']
+    const validFlags = ['BUG_MFA', 'BUG_SQLI', 'BUG_IDOR', 'BUG_EXCESSIVE_PRIVILEGES', 'BUG_SECRET_EXPOSURE']
     if (!validFlags.includes(flag)) throw new ApiError(400, `Invalid flag. Must be one of: ${validFlags.join(', ')}`)
     const newState = toggleBugFlag(flag)
     console.log(`[BugLab] ${flag} toggled → ${newState ? 'ON ⚠' : 'OFF ✓'} by Manager ${req.auth?.profile?.email}`)
@@ -468,6 +468,54 @@ export async function insiderThreat(req, res, next) {
       accessed_by: { user_id: callerId, email: req.auth.profile.email, role: callerRole },
       sensitive_data_exposed: sensitiveData,
       message: 'Logged EXCESSIVE_PRIVILEGE_DETECTED security event.'
+    })
+  } catch (e) { next(e) }
+}
+
+// ─── Phase 5: Client-Side Secret Exposure (CWE-798) ───────────────────────────
+
+/**
+ * GET /api/bugs/secret
+ *
+ * When BUG_SECRET_EXPOSURE is OFF : returns 404 — endpoint does not advertise itself.
+ * When BUG_SECRET_EXPOSURE is ON  : returns a controlled response containing a
+ *   clearly fake, non-functional credential for educational demonstration.
+ *
+ * SAFETY NOTE: This endpoint NEVER reads, copies, or returns any real environment
+ * variable, Supabase service-role key, JWT secret, or production credential.
+ * The values below are intentionally fictional and exist solely for the Bug Lab
+ * simulation of CWE-798 (Use of Hard-coded Credentials).
+ */
+export async function secretExposure(req, res, next) {
+  try {
+    if (!isBugEnabled('BUG_SECRET_EXPOSURE')) {
+      // When OFF: behave as though the endpoint does not exist
+      throw new ApiError(404, 'Not found')
+    }
+
+    const callerId = req.auth.profile.id
+    console.warn(`[BugLab] CLIENT_SIDE_SECRET_EXPOSURE: /api/bugs/secret accessed by ${req.auth.profile.email}`)
+
+    // Log the security event (once per access)
+    await supabaseAdmin.from('security_events').insert({
+      user_id: callerId,
+      event_type: 'CLIENT_SIDE_SECRET_EXPOSURE',
+      severity: 'CRITICAL',
+      description: 'Sensitive client-side configuration was accessed while the vulnerability was active.',
+      ip_address: req.ip || '127.0.0.1',
+    })
+
+    // *** FAKE CREDENTIAL ONLY — NOT A REAL KEY ***
+    // This string is intentionally non-functional and exists exclusively for
+    // the BugLab / SIH security-demonstration environment.
+    res.json({
+      mode: 'VULNERABLE',
+      vulnerability: 'CLIENT_SIDE_SECRET_EXPOSURE',
+      cwe: 'CWE-798',
+      credential_name: 'FAKE_SUPABASE_SERVICE_ROLE_KEY',
+      credential: 'BUGLAB_FAKE_ONLY_NOT_A_REAL_CREDENTIAL',
+      flag: 'FLAG{CLIENT_SIDE_SECRET_EXPOSURE}',
+      warning: '⚠ SIMULATED: This is a fake credential for the Risk Assessment Platform demo. No real secret is exposed.',
     })
   } catch (e) { next(e) }
 }
