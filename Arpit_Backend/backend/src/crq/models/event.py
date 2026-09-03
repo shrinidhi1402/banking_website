@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import BigInteger, DateTime, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,7 @@ class IngestedEvent(IdMixin, Base):
 
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
-    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    org_id: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
     
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

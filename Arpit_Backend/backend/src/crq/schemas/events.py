@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class EventEnvelope(BaseModel):
     """Generic event ingestion envelope."""
 
-    event_id: int = Field(
+    event_id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
         description="Unique event ID supplied by client or generated for idempotency",
     )
@@ -22,8 +22,8 @@ class EventEnvelope(BaseModel):
         examples=["control.disabled", "vuln.detected", "asset.added"],
     )
     org_id: int = Field(
-        ...,
-        description="Tenant organization UUID",
+        default=1,
+        description="Tenant organization id (crq_organizations.id)",
     )
     source: str = Field(
         default="api",
@@ -42,7 +42,7 @@ class EventEnvelope(BaseModel):
 class EventIngestResponse(BaseModel):
     """Response returned upon event ingestion."""
 
-    event_id: int
+    event_id: uuid.UUID
     event_type: str
     status: str = Field(description="'received' if new, 'duplicate' if already ingested")
     topic: str | None = None

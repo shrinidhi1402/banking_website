@@ -40,7 +40,12 @@ class Settings(BaseSettings):
     # API                                                                  #
     # ------------------------------------------------------------------ #
     API_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",  # bank site (Vite dev server)
+        "http://localhost:5174",  # bank site (Vite fallback port)
+    ]
 
     # ------------------------------------------------------------------ #
     # Database — Supabase                                                  #
