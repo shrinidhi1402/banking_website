@@ -1,80 +1,59 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto'
+import { env } from '../config/env.js'
 
 /**
- * Emits a security or control event to the CRQ platform backend.
- * This is a fire-and-forget style integration that will not crash
- * the calling application if CRQ is unreachable.
- * 
- * @param {string} eventType - The CRQ event type (e.g. control.disabled, vuln.detected)
- * @param {object} payload - The event-specific payload
+ * Emits a security / control event to the CRQ platform.
+ *
+ * Fire-and-forget: a slow or unreachable CRQ must never block or crash a
+ * banking request. Failures are logged and swallowed.
+ *
+ * @param {string} eventType  CRQ event type, e.g. "control.disabled", "vuln.detected"
+ * @param {object} payload    event-specific body (asset_id, control, cve_id, cvss_score, status…)
+ * @returns {Promise<{ok: boolean, status?: number, error?: string}>}
  */
-export async function emitCRQEvent(eventType, payload) {
-  const crqUrl = process.env.CRQ_BASE_URL;
-  const orgId = process.env.CRQ_ORG_ID;
-
-  if (!crqUrl || !orgId) {
-    console.warn(`[CRQ Client] CRQ_BASE_URL or CRQ_ORG_ID not configured. Event ${eventType} skipped.`);
-    return;
+export async function emitCRQEvent(eventType, payload = {}) {
+  const base = env.CRQ_BASE_URL?.replace(/\/+$/, '')
+  if (!base) {
+    console.warn(`[CRQ] CRQ_BASE_URL not set — event ${eventType} skipped`)
+    return { ok: false, error: 'not configured' }
   }
 
   const envelope = {
-    event_id: uuidv4(),
+    event_id: randomUUID(),
     event_type: eventType,
-    org_id: orgId,
+    org_id: env.CRQ_ORG_ID, // integer — matches crq_organizations.id
     source: 'bank-site',
-    payload: payload,
-    timestamp: new Date().toISOString()
-  };
+    payload,
+    timestamp: new Date().toISOString(),
+  }
 
-  const url = `${crqUrl.replace(/\/+$/, '')}/api/v1/events`;
+  const url = `${base}/api/v1/events`
 
-  // Simple retry wrapper (retry once)
-  let attempt = 0;
-  while (attempt < 2) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(envelope),
-        timeout: 3000 // 3s timeout
-      });
+        signal: AbortSignal.timeout(3000),
+      })
 
-      if (!response.ok) {
-        throw new Error(`CRQ returned ${response.status} ${response.statusText}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`CRQ ${res.status} ${res.statusText} ${body}`.trim())
       }
 
-      console.log(`[CRQ Client] Event ${eventType} emitted successfully to CRQ.`);
-      
-      // Local audit log (fire and forget)
-      logEventToAudit(eventType, payload, response.status);
-      return; // Success
-    } catch (error) {
-      attempt++;
-      console.warn(`[CRQ Client] Attempt ${attempt} failed for event ${eventType}: ${error.message}`);
-      if (attempt >= 2) {
-        console.error(`[CRQ Client] Exhausted retries. Event ${eventType} could not be delivered.`);
-        logEventToAudit(eventType, payload, 'failed');
+      const data = await res.json().catch(() => ({}))
+      console.log(`[CRQ] ${eventType} → ${data.status ?? 'ok'} (event ${envelope.event_id})`)
+      return { ok: true, status: res.status }
+    } catch (err) {
+      const msg = err?.message || String(err)
+      if (attempt === 2) {
+        console.error(`[CRQ] ${eventType} failed after ${attempt} attempts: ${msg}`)
+        return { ok: false, error: msg }
       }
+      console.warn(`[CRQ] ${eventType} attempt ${attempt} failed: ${msg} — retrying`)
     }
   }
-}
-
-async function logEventToAudit(eventType, payload, status) {
-  try {
-    // Import dynamically to avoid circular dependencies if any,
-    // or just assume supabaseAdmin is available.
-    const { supabaseAdmin } = await import('../config/supabase.js');
-    
-    // We create a new table 'crq_event_audit' or just use 'security_events'.
-    // The prompt says: "keep a simple table or log of {event_type, payload, sent_at, crq_response_status} in the bank site's own Supabase"
-    // Assuming we insert into 'crq_event_logs'
-    await supabaseAdmin.from('crq_event_logs').insert({
-      event_type: eventType,
-      payload: payload,
-      sent_at: new Date().toISOString(),
-      crq_response_status: status.toString()
-    });
-  } catch (err) {
-    console.error(`[CRQ Client] Failed to write local audit log: ${err.message}`);
-  }
+  return { ok: false, error: 'unreachable' }
 }

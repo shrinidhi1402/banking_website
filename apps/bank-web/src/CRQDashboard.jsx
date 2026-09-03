@@ -302,6 +302,7 @@ export default function CRQDashboard({ session, action }) {
           setLiveUpdate({
             eal: msg.new_eal,
             previous: msg.previous_eal,
+            orgEal: msg.org_eal,
             deltaPct: msg.delta_pct,
             alert: msg.threshold_alert,
             scope: msg.scope,
@@ -309,7 +310,8 @@ export default function CRQDashboard({ session, action }) {
           })
           setChatHistory((prev) => [...prev, {
             role: 'system',
-            text: `Risk state changed — ${msg.scope} EAL now ${fmtINR(msg.new_eal)} (${msg.delta_pct > 0 ? '+' : ''}${msg.delta_pct}%)`,
+            text: `Risk state changed — ${msg.scope} EAL now ${fmtINR(msg.new_eal)} (${msg.delta_pct > 0 ? '+' : ''}${msg.delta_pct}%)`
+              + (msg.org_eal != null ? `; portfolio EAL ${fmtINR(msg.org_eal)}` : ''),
           }])
           fetchRiskData()
         }
@@ -398,6 +400,7 @@ export default function CRQDashboard({ session, action }) {
               Live recompute ({liveUpdate.scope} scope): <strong>{fmtINR(liveUpdate.eal)}</strong>
               {liveUpdate.previous != null && <> — from {fmtINR(liveUpdate.previous)} </>}
               ({liveUpdate.deltaPct > 0 ? '+' : ''}{liveUpdate.deltaPct}%){liveUpdate.alert ? ' · threshold breach' : ''}
+              {liveUpdate.orgEal != null && <> · portfolio now <strong>{fmtINR(liveUpdate.orgEal)}</strong></>}
             </div>
           )}
 

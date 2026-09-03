@@ -27,6 +27,67 @@ import { getPgPool } from '../config/pgClient.js'
 import { ApiError } from '../utils/errors.js'
 import { emitCRQEvent } from '../services/crqClient.js'
 
+// ─── CRQ mapping ─────────────────────────────────────────────────────────────
+// Bug Lab flag → the CRQ asset it weakens (asset name must match a row seeded
+// by db/crq/003_crq_seed_demo.sql) plus how CRQ should model it.
+const CRQ_FLAG_MAP = {
+  BUG_MFA: {
+    kind: 'control', control: 'mfa', asset: 'Customer Banking Web App',
+    cve_id: 'BANK-MFA-BYPASS', cvss_score: 8.1,
+    description: 'Multi-factor authentication bypass on customer login',
+  },
+  BUG_SQLI: {
+    kind: 'vuln', control: 'waf', asset: 'Core Banking Database',
+    cve_id: 'BANK-SQLI-001', cvss_score: 9.4,
+    description: 'SQL injection in customer search endpoint',
+  },
+  BUG_IDOR: {
+    kind: 'vuln', control: 'access_control', asset: 'Customer Banking Web App',
+    cve_id: 'BANK-IDOR-001', cvss_score: 8.2,
+    description: 'Broken object-level authorization (IDOR) on accounts API',
+  },
+  BUG_EXCESSIVE_PRIVILEGES: {
+    kind: 'vuln', control: 'access_control', asset: 'Internal Employee Portal',
+    cve_id: 'BANK-PRIV-001', cvss_score: 7.5,
+    description: 'Excessive privileges / insider-threat role bypass',
+  },
+  BUG_SECRET_EXPOSURE: {
+    kind: 'vuln', control: 'access_control', asset: 'Customer Banking Web App',
+    cve_id: 'BANK-SECRET-001', cvss_score: 7.4,
+    description: 'Client-side secret exposure (CWE-798)',
+  },
+  BUG_SUPPLY_CHAIN_COMPROMISE: {
+    kind: 'vuln', control: 'patching', asset: 'Core Banking Database',
+    cve_id: 'BANK-SUPPLYCHAIN-001', cvss_score: 9.6,
+    description: 'Vendor supply-chain compromise (ATT&CK T1195.002)',
+  },
+  BUG_PAM_JUMP_SERVER: {
+    kind: 'vuln', control: 'segmentation', asset: 'Internal Employee Portal',
+    cve_id: 'BANK-PAM-001', cvss_score: 9.1,
+    description: 'Compromised privileged jump server / PAM access point (CWE-250)',
+  },
+}
+
+/** Emit the CRQ event that corresponds to a Bug Lab flag flip. */
+async function emitCrqForFlag(flag, enabled) {
+  const m = CRQ_FLAG_MAP[flag]
+  if (!m) return
+  const payload = {
+    asset_id: m.asset,
+    control: m.control,
+    cve_id: m.cve_id,
+    cvss_score: m.cvss_score,
+    description: m.description,
+    status: enabled ? 'disabled' : 'enabled', // control status from CRQ's POV
+    flag,
+  }
+  const eventType =
+    m.kind === 'control'
+      ? enabled ? 'control.disabled' : 'control.enabled'
+      : enabled ? 'vuln.detected' : 'vuln.resolved'
+  await emitCRQEvent(eventType, payload)
+}
+
 // ─── Flag Management ──────────────────────────────────────────────────────────
 
 /**
@@ -54,28 +115,14 @@ export function toggle(req, res, next) {
     const newState = toggleBugFlag(flag)
     console.log(`[BugLab] ${flag} toggled → ${newState ? 'ON ⚠' : 'OFF ✓'} by Manager ${req.auth?.profile?.email}`)
 
-    // --- CRQ Event Emission ---
-    try {
-      if (flag === 'BUG_MFA') {
-        const eventType = newState ? 'control.disabled' : 'control.enabled';
-        emitCRQEvent(eventType, { control: "mfa", account_id: "admin-all", asset_id: "core-banking-db" });
-      } else if (flag === 'BUG_SQLI') {
-        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
-        emitCRQEvent(eventType, { vulnerability_id: "BUG_SQLI", cve_id_or_description: "SQL Injection in customer search", asset_id: "bank-api", severity: "CRITICAL" });
-      } else if (flag === 'BUG_IDOR') {
-        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
-        emitCRQEvent(eventType, { vulnerability_id: "BUG_IDOR", cve_id_or_description: "Broken Access Control (IDOR) on accounts", asset_id: "bank-api", severity: "HIGH" });
-      } else if (flag === 'BUG_SUPPLY_CHAIN_COMPROMISE') {
-        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
-        emitCRQEvent(eventType, { vulnerability_id: "BUG_SUPPLY_CHAIN_COMPROMISE", cve_id_or_description: "Vendor supply chain compromise (ATT&CK T1195.002)", asset_id: "core-banking-db", severity: "CRITICAL" });
-      } else if (flag === 'BUG_PAM_JUMP_SERVER') {
-        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
-        emitCRQEvent(eventType, { vulnerability_id: "BUG_PAM_JUMP_SERVER", cve_id_or_description: "Compromised privileged jump server / PAM access point (CWE-250)", asset_id: "jump-server", severity: "CRITICAL" });
-      }
-    } catch (err) {
-      console.error("[BugLab] Error emitting CRQ event:", err);
-    }
-    // --------------------------
+    // --- CRQ Event Emission ------------------------------------------------
+    // Each toggle maps to a CRQ control- or vuln- event against a real seeded
+    // CRQ asset (matched by name). Enabling a bug = weaken/introduce risk;
+    // disabling = restore. CRQ recomputes EAL and pushes it to the dashboard.
+    emitCrqForFlag(flag, newState).catch((err) =>
+      console.error('[BugLab] CRQ emit error:', err?.message || err),
+    )
+    // --------------------------------------------------------------------
 
     res.json({ flag, enabled: newState, flags: getBugFlags() })
   } catch (e) { next(e) }
@@ -602,7 +649,6 @@ export async function triggerSupplyChain(req, res, next) {
 
     const attackerIp = '198.51.100.42' // Simulated attacker/vendor infrastructure IP
     const vendorName = 'Apex Core Banking SDK v3.7.1'
-    const now = new Date()
 
     // Stage 1: vendor update notification received
     await supabaseAdmin.from('security_events').insert({

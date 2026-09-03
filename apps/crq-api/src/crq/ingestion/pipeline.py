@@ -13,11 +13,137 @@ from crq.core.logging import get_logger
 from crq.models.asset import Asset
 from crq.models.control import ControlAssessment, Control
 from crq.models.risk import EalSnapshot
+from crq.models.vuln import AssetVulnerability, Vulnerability
 from crq.notifications.ws_manager import ws_manager
 from crq.risk_engine.fair import compute_eal
 from crq.schemas.events import EventEnvelope
 
 log = get_logger(__name__)
+
+# Fixed org UUID used for org-scope EAL snapshots (matches the seed row).
+ORG_SCOPE_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+async def _resolve_asset_id(asset_id_val: Any, session: AsyncSession) -> int:
+    """Resolve an asset reference (numeric id, name, external_id or hostname) to a row id."""
+    if asset_id_val is None:
+        return 1
+    try:
+        return int(asset_id_val)
+    except (TypeError, ValueError):
+        stmt = select(Asset).where(
+            (Asset.name == str(asset_id_val))
+            | (Asset.external_id == str(asset_id_val))
+            | (Asset.hostname == str(asset_id_val))
+        )
+        res = await session.execute(stmt)
+        asset = res.scalar_one_or_none()
+        return asset.id if asset else 1
+
+
+async def _upsert_vulnerability(payload: dict[str, Any], asset_id: int, session: AsyncSession) -> None:
+    """Create/refresh a crq_vulnerabilities row + asset link so the finding shows up
+    in /risk/contributors and /vulnerabilities."""
+    cve = payload.get("cve_id") or payload.get("vulnerability_id") or "BANK-UNKNOWN"
+    cvss = payload.get("cvss_score")
+    desc = payload.get("description") or payload.get("title")
+
+    res = await session.execute(select(Vulnerability).where(Vulnerability.cve_id == cve))
+    vuln = res.scalar_one_or_none()
+    if vuln is None:
+        vuln = Vulnerability(
+            cve_id=cve,
+            title=desc,
+            description=desc,
+            cvss_score=float(cvss) if cvss is not None else None,
+            exploit_available=True,
+        )
+        session.add(vuln)
+        await session.flush()
+    else:
+        if cvss is not None:
+            vuln.cvss_score = float(cvss)
+        if desc:
+            vuln.description = desc
+
+    link_res = await session.execute(
+        select(AssetVulnerability).where(
+            AssetVulnerability.asset_id == asset_id,
+            AssetVulnerability.vulnerability_id == vuln.id,
+        )
+    )
+    link = link_res.scalar_one_or_none()
+    if link is None:
+        session.add(AssetVulnerability(asset_id=asset_id, vulnerability_id=vuln.id, status="open"))
+    else:
+        link.status = "open"
+    await session.flush()
+
+
+async def _resolve_vulnerability(payload: dict[str, Any], session: AsyncSession) -> None:
+    """Remove a previously-recorded finding (cascade drops its asset links)."""
+    cve = payload.get("cve_id") or payload.get("vulnerability_id")
+    if not cve:
+        return
+    res = await session.execute(select(Vulnerability).where(Vulnerability.cve_id == cve))
+    vuln = res.scalar_one_or_none()
+    if vuln is not None:
+        await session.delete(vuln)
+        await session.flush()
+
+
+async def _write_org_rollup(org_id: int, session: AsyncSession) -> float:
+    """Aggregate the latest per-asset EAL into an org-scope snapshot so the
+    portfolio headline reflects asset-level changes."""
+    assets_res = await session.execute(select(Asset).where(Asset.org_id == org_id))
+    assets = list(assets_res.scalars().all())
+
+    total_eal = total_v95 = total_v99 = 0.0
+    for asset in assets:
+        snap_stmt = (
+            select(EalSnapshot)
+            .where(
+                EalSnapshot.org_id == org_id,
+                EalSnapshot.scope == "asset",
+                EalSnapshot.scope_id == asset.uuid,
+            )
+            .order_by(desc(EalSnapshot.computed_at))
+            .limit(1)
+        )
+        snap = (await session.execute(snap_stmt)).scalar_one_or_none()
+        if snap is not None:
+            total_eal += float(snap.eal)
+            total_v95 += float(snap.var_95 or snap.eal * 1.85)
+            total_v99 += float(snap.var_99 or snap.eal * 2.40)
+        else:
+            calc = compute_eal(
+                asset_id=asset.id, org_id=org_id, criticality_score=asset.criticality_score
+            )
+            total_eal += calc["eal"]
+            total_v95 += calc["var_95"]
+            total_v99 += calc["var_99"]
+
+    session.add(
+        EalSnapshot(
+            org_id=org_id,
+            scope="org",
+            scope_id=ORG_SCOPE_UUID,
+            eal=round(total_eal, 2),
+            var_95=round(total_v95, 2),
+            var_99=round(total_v99, 2),
+            loss_distribution={
+                "p10": round(total_eal * 0.4, 2),
+                "p50": round(total_eal, 2),
+                "p90": round(total_eal * 1.9, 2),
+            },
+            calculation_version="1.0-rollup",
+            inputs_hash="org_rollup",
+            computed_at=datetime.now(UTC),
+            source_event_ids=[],
+        )
+    )
+    await session.flush()
+    return round(total_eal, 2)
 
 
 async def handle_control_event(
@@ -110,36 +236,30 @@ async def handle_vuln_event(
     event: EventEnvelope,
     session: AsyncSession,
 ) -> dict[str, Any]:
-    """Handle vuln.detected events and recompute asset EAL."""
+    """Handle vuln.detected / vuln.resolved events and recompute asset EAL."""
     payload = event.payload
-    cve_id = payload.get("cve_id", "CVE-UNKNOWN")
+    cve_id = payload.get("cve_id", payload.get("vulnerability_id", "CVE-UNKNOWN"))
     cvss_score = float(payload.get("cvss_score", 7.5))
-    asset_id_val = payload.get("asset_id")
+    is_resolved = event.event_type.endswith(".resolved")
 
-    log.info("processing_vuln_event", cve_id=cve_id, cvss=cvss_score)
+    log.info(
+        "processing_vuln_event", cve_id=cve_id, cvss=cvss_score, resolved=is_resolved
+    )
 
-    target_asset_id = 1
-    if asset_id_val:
-        try:
-            target_asset_id = int(asset_id_val)
-        except ValueError:
-            # Look up by name or external_id
-            asset_stmt = select(Asset).where(
-                (Asset.name == str(asset_id_val)) | 
-                (Asset.external_id == str(asset_id_val)) |
-                (Asset.hostname == str(asset_id_val))
-            )
-            res = await session.execute(asset_stmt)
-            asset = res.scalar_one_or_none()
-            if asset:
-                target_asset_id = asset.id
+    target_asset_id = await _resolve_asset_id(payload.get("asset_id"), session)
 
-    # Recompute EAL with higher vuln count / threat
+    # Keep the vulnerability backlog in sync so it surfaces in /risk/contributors.
+    if is_resolved:
+        await _resolve_vulnerability(payload, session)
+    else:
+        await _upsert_vulnerability(payload, target_asset_id, session)
+
+    # A resolved finding lowers exposure; a new one raises it.
     eal_result = await handle_risk_recompute(
         asset_id=target_asset_id,
         org_id=event.org_id,
-        criticality_score=8,
-        active_vulns_count=4,
+        criticality_score=6 if is_resolved else 8,
+        active_vulns_count=1 if is_resolved else 4,
         source_event_id=event.event_id,
         session=session,
     )
@@ -147,6 +267,7 @@ async def handle_vuln_event(
     return {
         "event_id": str(event.event_id),
         "cve_id": cve_id,
+        "resolved": is_resolved,
         "new_eal": eal_result["new_eal"],
         "delta_pct": eal_result["delta_pct"],
         "threshold_alert": eal_result["threshold_alert"],
@@ -212,9 +333,13 @@ async def handle_risk_recompute(
         computed_at=now,
         source_event_ids=[str(source_event_id)] if source_event_id else [],
     )
+    org_eal: float | None = None
     if session is not None:
         session.add(snapshot)
         await session.flush()
+        # Roll the new per-asset figure up into an org-scope snapshot so the
+        # portfolio headline (GET /risk/summary?scope=org) reflects the change.
+        org_eal = await _write_org_rollup(org_id, session)
 
     # 4. Threshold Monitor (architecture §3.2 step 5)
     delta_pct = (
@@ -240,6 +365,7 @@ async def handle_risk_recompute(
         "org_id": str(org_id),
         "previous_eal": previous_eal,
         "new_eal": new_eal,
+        "org_eal": org_eal,
         "delta_pct": delta_pct,
         "threshold_alert": threshold_alert,
         "timestamp": now.isoformat(),
@@ -250,6 +376,7 @@ async def handle_risk_recompute(
         "asset_id": str(asset_id),
         "previous_eal": previous_eal,
         "new_eal": new_eal,
+        "org_eal": org_eal,
         "delta_pct": delta_pct,
         "threshold_alert": threshold_alert,
     }
