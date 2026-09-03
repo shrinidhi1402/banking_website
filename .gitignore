@@ -2,12 +2,17 @@
 # Dependencies
 # =========================
 node_modules/
+.pnp
+.pnp.js
 
 # =========================
 # Build output
 # =========================
 dist/
 dist-ssr/
+build/
+.next/
+out/
 
 # =========================
 # Environment / Secrets
@@ -15,6 +20,35 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+
+# =========================
+# Python (apps/crq-api)
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+celerybeat-schedule
+celerybeat.pid
+
+# Local-only backend config (kept out of VCS by upstream convention)
+apps/crq-api/alembic.ini
+apps/crq-api/backend_progress.md
+apps/crq-api/backend_plan.md
 
 # =========================
 # Logs
@@ -38,8 +72,10 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+*~
 
 # =========================
 # OS files
 # =========================
 .DS_Store
+Thumbs.db

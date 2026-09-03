@@ -1,27 +1,23 @@
 {
-  "name": "banking",
+  "name": "banking-crq-monorepo",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "description": "0xAxiom demo bank + CyberRisk Quantifier (CRQ) platform",
+  "//": "crq-web is intentionally NOT a workspace: it pins React 18 / Next 14 types that collide with bank-web's React 19 when hoisted. Install it on its own: cd apps/crq-web && npm install.",
+  "workspaces": [
+    "apps/bank-web",
+    "apps/bank-api"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "eslint": "^10.9.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.4",
-    "globals": "^17.11.0",
-    "vite": "^8.2.2"
+    "dev:bank-web": "npm run dev -w apps/bank-web",
+    "dev:bank-api": "npm run dev -w apps/bank-api",
+    "dev:crq-web": "npm --prefix apps/crq-web run dev",
+    "build": "npm run build -w apps/bank-web",
+    "build:bank-web": "npm run build -w apps/bank-web",
+    "build:crq-web": "npm --prefix apps/crq-web run build",
+    "install:crq-web": "npm --prefix apps/crq-web install",
+    "seed:bank": "npm run seed -w apps/bank-api",
+    "crq:up": "docker compose -f docker-compose.dev.yml up -d --build",
+    "crq:down": "docker compose -f docker-compose.dev.yml down"
   }
 }

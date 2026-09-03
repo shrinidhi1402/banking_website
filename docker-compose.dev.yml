@@ -1,0 +1,207 @@
+# ============================================================
+# docker-compose.dev.yml — CRQ dev stack (Supabase adapted)
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# ============================================================
+#
+# Services:
+#   Data:        redis (Postgres & Auth handled by Supabase)
+#   Observability: prometheus, grafana, loki, tempo, glitchtip
+#   App:         crq-api (FastAPI), crq-worker (Celery)
+#
+# ============================================================
+
+services:
+
+  # ============================================================
+  # REDIS — cache + Celery broker
+  # ============================================================
+  redis:
+    image: redis:7.4-alpine
+    container_name: crq-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crq-net
+
+  # ============================================================
+  # PROMETHEUS — metrics collection
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: crq-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - crq-net
+
+  # ============================================================
+  # GRAFANA — dashboards
+  # ============================================================
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: crq-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3002:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks:
+      - crq-net
+
+  # ============================================================
+  # LOKI — log aggregation
+  # ============================================================
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: crq-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./infra/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/tmp/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - crq-net
+
+  # ============================================================
+  # TEMPO — distributed tracing
+  # ============================================================
+  tempo:
+    image: grafana/tempo:2.6.0
+    container_name: crq-tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    volumes:
+      - ./infra/tempo/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
+      - tempo_data:/tmp/tempo
+    ports:
+      - "3200:3200"   # Tempo query API
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    networks:
+      - crq-net
+
+  # ============================================================
+  # GLITCHTIP — error tracking
+  # ============================================================
+  glitchtip-db:
+    image: postgres:16-alpine
+    container_name: crq-glitchtip-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: glitchtip
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: glitchtip_password
+    volumes:
+      - glitchtip_db_data:/var/lib/postgresql/data
+    networks:
+      - crq-net
+
+  glitchtip:
+    image: glitchtip/glitchtip:v4.1.4
+    container_name: crq-glitchtip
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://glitchtip:glitchtip_password@glitchtip-db:5432/glitchtip
+      SECRET_KEY: "change-me-in-production-glitchtip-secret"
+      PORT: "8000"
+      EMAIL_URL: "consolemail://"
+      GLITCHTIP_DOMAIN: "http://localhost:8090"
+      DEFAULT_FROM_EMAIL: "glitchtip@crq.local"
+      CELERY_WORKER_CONCURRENCY: "1"
+    ports:
+      - "8090:8000"
+    depends_on:
+      - glitchtip-db
+    networks:
+      - crq-net
+
+  # ============================================================
+  # CRQ API — FastAPI application
+  # ============================================================
+  crq-api:
+    build:
+      context: ./apps/crq-api
+      dockerfile: Dockerfile
+    container_name: crq-api
+    restart: unless-stopped
+    env_file: ./apps/crq-api/.env
+    environment:
+      CRQ_REDIS_URL: redis://redis:6379/0
+      CRQ_OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+      CRQ_DISABLE_AUTH: "true"
+      # Supabase env vars should be passed here or loaded from .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crq-net
+
+  # ============================================================
+  # CRQ WORKER — Celery worker
+  # ============================================================
+  crq-worker:
+    build:
+      context: ./apps/crq-api
+      dockerfile: Dockerfile
+    container_name: crq-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "crq.workers.celery_app:celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    env_file: ./apps/crq-api/.env
+    environment:
+      CRQ_REDIS_URL: redis://redis:6379/0
+      CRQ_CELERY_BROKER_URL: redis://redis:6379/1
+      CRQ_CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crq-net
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  tempo_data:
+  glitchtip_db_data:
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  crq-net:
+    driver: bridge
