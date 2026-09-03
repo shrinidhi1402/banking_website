@@ -54,3 +54,19 @@ export async function listVulnerabilities(sort = "eal_contribution", order = "de
   if (!res.ok) throw new Error("Failed to list vulnerabilities");
   return res.json();
 }
+
+export interface QueryResponse {
+  answer: string;
+  context: Record<string, unknown>;
+  plan?: Record<string, unknown> | null;
+}
+
+export async function askQuery(query: string): Promise<QueryResponse> {
+  const res = await fetch(`${API_BASE}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) throw new Error(`CRQ AI query failed: ${res.status}`);
+  return res.json();
+}

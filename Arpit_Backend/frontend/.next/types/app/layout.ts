@@ -1,4 +1,4 @@
-// File: C:\Users\arpit\OneDrive\Desktop\banking_website\Arpit_Backend\frontend\src\app\layout.tsx
+// File: D:\Projects\0xAxiom\banking_website\Arpit_Backend\frontend\src\app\layout.tsx
 import * as entry from '../../../src/app/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

@@ -79,8 +79,18 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ------------------------------------------------------------------ #
-    # AI Gateway (B4 — stubs for now)                                     #
+    # AI Gateway (B4)                                                      #
     # ------------------------------------------------------------------ #
+    # Primary: local Ollama (OpenAI-compatible at /v1)
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.2:latest"
+
+    # Fallback: Groq cloud API (OpenAI-compatible)
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_MODEL: str = "llama3-8b-8192"
+
+    # Legacy vLLM fields kept for backward compat (unused by new client)
     VLLM_BASE_URL: str = "http://localhost:8000/v1"
     TEI_BASE_URL: str = "http://localhost:8001"
     LLM_MODEL: str = "meta-llama/Llama-3.1-8B-Instruct"

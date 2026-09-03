@@ -31,9 +31,6 @@ export default function EALCard() {
     );
   }
 
-  // Simulated trend logic for display (would come from API comparison in real prod)
-  const isUp = true; 
-
   return (
     <div className="bg-surface border border-surfaceBorder rounded-lg p-5 shadow-card">
       <div className="flex items-start justify-between font-semibold text-muted text-[11px] mb-2">
@@ -48,10 +45,6 @@ export default function EALCard() {
           {formatINR(data.eal)}
         </div>
         <div className="flex items-center mt-1 space-x-2">
-          <span className={`flex items-center text-[10px] font-bold ${isUp ? "text-riskCritical" : "text-riskLow"}`}>
-            {isUp ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-            {isUp ? "+4.2% (30d)" : "-12.5% (30d)"}
-          </span>
           <span className="text-muted text-[10px]">VaR 95: <span className="font-bold">{formatINR(data.var_95)}</span></span>
         </div>
       </div>

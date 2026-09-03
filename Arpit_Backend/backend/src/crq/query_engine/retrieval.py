@@ -16,6 +16,14 @@ async def execute_retrieval(query: StructuredQuery, session: AsyncSession, org_i
     
     if query.query_type == "top_risk":
         # Structured lookup from risk endpoints
+        # Fetch the latest EAL snapshot for the org
+        eal_stmt = text("SELECT eal, var_95, var_99 FROM crq_eal_snapshots WHERE org_id = :org AND scope = 'org' ORDER BY computed_at DESC LIMIT 1")
+        eal_res = await session.execute(eal_stmt, {"org": org_id})
+        eal_row = eal_res.fetchone()
+        if eal_row:
+            # Convert decimal to float for JSON serialization
+            context["org_risk_summary"] = {k: float(v) if v is not None else None for k, v in dict(eal_row._mapping).items()}
+            
         stmt = text("SELECT name, criticality_score FROM crq_assets WHERE org_id = :org ORDER BY criticality_score DESC LIMIT :limit")
         res = await session.execute(stmt, {"org": org_id, "limit": query.top_n})
         context["top_assets"] = [dict(row._mapping) for row in res]

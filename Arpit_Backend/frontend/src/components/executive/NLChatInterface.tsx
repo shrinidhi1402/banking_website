@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Send, ShieldCheck, AlertTriangle, MessageSquare, ChevronRight, History } from "lucide-react";
+import { Search, Send, ShieldCheck, AlertTriangle, MessageSquare, History } from "lucide-react";
 import { formatINR } from "@/lib/formatters";
+import { askQuery } from "@/lib/api";
 
 // Mock citations
 const CITATIONS: Record<string, string> = {
-  "c1": "Source: Database eal_snapshots (Row ID: 94a2-11bc) - EAL recorded at ₹4.2Cr on Oct 12",
+  "c1": "Source: Database eal_snapshots (Row ID: 94a2-11bc) - Latest EAL Record",
   "c2": "Source: Vulnerability Scanner (CVE-2023-44487) - Critical severity on Edge Gateways",
   "c3": "Source: Threat Intel Feed (APT29) - Increased frequency in finance sector"
 };
@@ -48,33 +49,36 @@ export default function NLChatInterface() {
     setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", content: userMsg }]);
     setIsLoading(true);
 
-    // Mock API response delay
-    setTimeout(() => {
-      // Mock different responses to demonstrate grounding
-      let responseMsg: Message;
-      
-      if (userMsg.toLowerCase().includes("eal") || userMsg.toLowerCase().includes("cost")) {
-        responseMsg = {
+    askQuery(userMsg)
+      .then((res) => {
+        // Grounded = backend returned real context data from EAL snapshots
+        const isGrounded = res.context && Object.keys(res.context).length > 0;
+        const responseMsg: Message = {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: "The current organization-wide Expected Annual Loss is **₹4.2 Cr**. The primary driver is a critical vulnerability [c2] affecting our Edge Gateways, compounded by recent threat intel [c3].",
-          grounded: true,
-          citations: ["c1", "c2", "c3"]
+          content: res.answer,
+          grounded: isGrounded,
+          grounding_issues: isGrounded
+            ? undefined
+            : "Response could not be fully verified against EAL snapshot data.",
         };
-      } else {
-        // Demonstrate unverified claim
-        responseMsg = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: "I believe the risk in Retail Banking has decreased by 50% recently due to the new firewall implementation.",
-          grounded: false,
-          grounding_issues: "Unable to verify the 50% decrease in the database. EAL snapshots do not reflect this change.",
-        };
-      }
-      
-      setMessages(prev => [...prev, responseMsg]);
-      setIsLoading(false);
-    }, 1200);
+        setMessages(prev => [...prev, responseMsg]);
+      })
+      .catch((err: Error) => {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content: "I was unable to process your query. Please check that the CRQ backend is running.",
+            grounded: false,
+            grounding_issues: err.message,
+          },
+        ]);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   };
 
   const handleCitationClick = (ref: string) => {

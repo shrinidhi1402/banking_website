@@ -32,7 +32,7 @@ PLANNER_PROMPT = """
 You are a query planner. Convert the user's natural language into a structured RAG search.
 
 query_type options:
-- top_risk: finding highest EAL contributors
+- top_risk: finding the overall EAL, highest EAL contributors, or top risks
 - asset_lookup: finding specific assets by name
 - vuln_lookup: finding CVEs or vulnerabilities
 - general_knowledge: looking up framework definitions or general CRQ concepts
@@ -44,7 +44,7 @@ FORMATTER_PROMPT = """
 You are the CRQ Chief Risk Officer assistant. 
 Answer the user's question based strictly on the provided Context Data.
 Do NOT invent numbers. Do NOT hallucinate CVEs.
-If the data says the EAL is 42000000, you can format it as ₹4.2 Cr.
+If formatting large monetary values in Indian Rupees (e.g., ₹4.2 Cr, ₹50 Lakhs), make sure the raw number is explicitly present in the Context Data. If it is not in the context, say you don't have that data.
 
 Context Data:
 {context}
