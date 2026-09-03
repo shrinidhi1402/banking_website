@@ -39,11 +39,13 @@ bugRouter.get('/flags', bugs.getFlags)
 
 // Phase 0-3 – Flag management and simulations (Manager only)
 const managerBugRouter = Router(); managerBugRouter.use(requireRole('MANAGER'))
-managerBugRouter.post('/toggle',              bugs.toggle)
-managerBugRouter.post('/trigger/mfa-bypass',  bugs.triggerMfaBypass)
-managerBugRouter.post('/search',              bugs.sqlSearch)
-managerBugRouter.get('/account',              bugs.idorAccount)
-managerBugRouter.get('/accounts/list',        bugs.idorListAccounts)
+managerBugRouter.post('/toggle',                    bugs.toggle)
+managerBugRouter.post('/trigger/mfa-bypass',        bugs.triggerMfaBypass)
+managerBugRouter.post('/trigger/supply-chain',      bugs.triggerSupplyChain)   // Phase 6
+managerBugRouter.post('/trigger/pam-jump-server',   bugs.triggerPamJumpServer) // Phase 7
+managerBugRouter.post('/search',                    bugs.sqlSearch)
+managerBugRouter.get('/account',                    bugs.idorAccount)
+managerBugRouter.get('/accounts/list',              bugs.idorListAccounts)
 bugRouter.use(managerBugRouter)
 router.use('/bugs', bugRouter)
 

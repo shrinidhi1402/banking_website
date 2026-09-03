@@ -898,7 +898,7 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager, on
   const events = managerData?.securityEvents || []
   const token = session?.access_token
 
-  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false })
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false, BUG_SUPPLY_CHAIN_COMPROMISE: false, BUG_PAM_JUMP_SERVER: false })
   const [flagsLoaded, setFlagsLoaded] = useState(false)
   const [toggling, setToggling] = useState(null)
 
@@ -940,6 +940,8 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager, on
     { flag: 'BUG_IDOR', label: 'Broken Access Control',        risk: 'HIGH',     cwe: 'CWE-639', detail: 'Account endpoint skips ownership check. Any account ID accessible.' },
     { flag: 'BUG_EXCESSIVE_PRIVILEGES', label: 'Excessive Privileges', risk: 'HIGH', cwe: 'CWE-269', detail: 'Simulates an employee having excessive permissions to sensitive banking data.' },
     { flag: 'BUG_SECRET_EXPOSURE', label: 'Client-Side Secret Exposure', risk: 'CRITICAL', cwe: 'CWE-798', detail: 'Sensitive configuration is exposed to the client. Browser inspection may reveal a privileged-looking credential.' },
+    { flag: 'BUG_SUPPLY_CHAIN_COMPROMISE', label: 'Supply Chain Compromise', risk: 'CRITICAL', cwe: 'ATT&CK T1195.002', detail: 'Trusted vendor update is compromised upstream. Normal patch process deploys the backdoor.' },
+    { flag: 'BUG_PAM_JUMP_SERVER', label: 'Compromised Jump Server / PAM', risk: 'CRITICAL', cwe: 'CWE-250', detail: 'Privileged jump server compromised. All downstream banking systems reachable from it are at risk.' },
   ]
   const riskCol = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
 
@@ -960,9 +962,9 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager, on
             <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '1px' }}>Risk Assessment Platform · Activate to simulate real attack surface</div>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-            {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES, flags.BUG_SECRET_EXPOSURE].filter(Boolean).length > 0 && (
+            {Object.values(flags).filter(Boolean).length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,71,87,0.2)', border: '1px solid rgba(255,71,87,0.4)', color: '#ff4757', fontSize: '11px', fontWeight: 700 }}>
-                ⚠ {[flags.BUG_MFA, flags.BUG_SQLI, flags.BUG_IDOR, flags.BUG_EXCESSIVE_PRIVILEGES, flags.BUG_SECRET_EXPOSURE].filter(Boolean).length} ACTIVE
+                ⚠ {Object.values(flags).filter(Boolean).length} ACTIVE
               </span>
             )}
           </div>
@@ -1555,7 +1557,7 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
   const token = session?.access_token
 
   // Flags state
-  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false })
+  const [flags, setFlags] = useState({ BUG_MFA: false, BUG_SQLI: false, BUG_IDOR: false, BUG_EXCESSIVE_PRIVILEGES: false, BUG_SECRET_EXPOSURE: false, BUG_SUPPLY_CHAIN_COMPROMISE: false, BUG_PAM_JUMP_SERVER: false })
   const [flagsLoading, setFlagsLoading] = useState(true)
 
   // Phase 1 state
@@ -1577,6 +1579,16 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
   const [idorError, setIdorError] = useState('')
   const [idorAccounts, setIdorAccounts] = useState(null)
   const [idorListLoading, setIdorListLoading] = useState(false)
+
+  // Phase 6 state
+  const [scResult, setScResult] = useState(null)
+  const [scLoading, setScLoading] = useState(false)
+  const [scError, setScError] = useState('')
+
+  // Phase 7 state
+  const [pamResult, setPamResult] = useState(null)
+  const [pamLoading, setPamLoading] = useState(false)
+  const [pamError, setPamError] = useState('')
 
   async function loadFlags() {
     setFlagsLoading(true)
@@ -1606,6 +1618,34 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
       action(`${flag} ${data.enabled ? 'ENABLED ⚠' : 'disabled ✓'}`)
     } catch (e) {
       action(e.message || 'Toggle failed')
+    }
+  }
+
+  // Phase 6 – Supply Chain simulation trigger
+  async function handleSupplyChain() {
+    setScLoading(true); setScError(''); setScResult(null)
+    try {
+      const data = await apiPost('/bugs/trigger/supply-chain', {}, token)
+      setScResult(data)
+      action('Supply Chain simulation complete — check Security panel')
+    } catch (err) {
+      setScError(err.message || 'Simulation failed')
+    } finally {
+      setScLoading(false)
+    }
+  }
+
+  // Phase 7 – PAM Jump Server simulation trigger
+  async function handlePamJumpServer() {
+    setPamLoading(true); setPamError(''); setPamResult(null)
+    try {
+      const data = await apiPost('/bugs/trigger/pam-jump-server', {}, token)
+      setPamResult(data)
+      action('Jump Server simulation complete — check Security panel')
+    } catch (err) {
+      setPamError(err.message || 'Simulation failed')
+    } finally {
+      setPamLoading(false)
     }
   }
 
@@ -1709,6 +1749,22 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
       description: 'When enabled, a fake client-side credential is intentionally exposed through browser-accessible application resources. The vulnerability demonstrates how secrets embedded in client-side code can be discovered through browser inspection.',
       cve: 'CWE-798: Use of Hard-coded Password',
     },
+    {
+      flag: 'BUG_SUPPLY_CHAIN_COMPROMISE',
+      phase: 6,
+      title: 'Vendor / Third-Party Software Supply Chain Compromise',
+      risk: 'CRITICAL',
+      description: 'A trusted third-party vendor update is compromised upstream before it reaches the bank. The update passes normal signature/trust verification and is deployed through the standard patch-management workflow. After deployment, the compromised component activates a simulated backdoor with full vendor-level trust, placing downstream banking systems at risk.',
+      cve: 'ATT\u0026CK T1195.002: Compromise Software Supply Chain',
+    },
+    {
+      flag: 'BUG_PAM_JUMP_SERVER',
+      phase: 7,
+      title: 'Compromised Privileged Access / Jump Server',
+      risk: 'CRITICAL',
+      description: 'Compromising the centralized privileged jump server provides simulated access to all downstream critical banking systems reachable through it. Because the jump server is a force multiplier, a single point of compromise translates into a large blast radius across accounts, user records, core banking, and payment systems.',
+      cve: 'CWE-250: Execution with Unnecessary Privileges',
+    },
   ]
 
   const riskColor = { CRITICAL: '#ff4757', HIGH: '#ff6b35', MEDIUM: '#ffa502', LOW: '#2ed573' }
@@ -1737,7 +1793,7 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
           Each toggle activates a real, exploitable vulnerability in this banking platform. Use the interactive panels below to trigger and observe each attack. All events are logged to the Security panel for risk scoring.
         </p>
         <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
-          {['Northstar Risk Engine v2.1', '5 Vulnerabilities Loaded', 'All Events Logged', 'Manager Auth Required'].map(tag => (
+          {['Northstar Risk Engine v2.1', '7 Vulnerabilities Loaded', 'All Events Logged', 'Manager Auth Required'].map(tag => (
             <span key={tag} style={{ padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', fontSize: '11px', border: '1px solid rgba(255,255,255,0.1)' }}>{tag}</span>
           ))}
         </div>
@@ -2125,6 +2181,150 @@ function BugLabPanel({ session, action, onSecretFlagChange }) {
                     ✓ Bug is disabled. The client-side payload and secret object are completely removed from the browser.
                   </div>
                 )}
+              </div>
+            )}
+            {/* Phase 6 controls */}
+            {b.phase === 6 && (
+              <div>
+                <div style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test Supply Chain Compromise:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Click <strong>"▶ Run Supply Chain Simulation"</strong> below</li>
+                    <li>Observe the six-stage attack chain: vendor update received → trust passes → deployed → compromised → backdoor activated → downstream assets at risk</li>
+                    <li>Go to the <strong>Security</strong> tab → see all staged events with CRITICAL severity</li>
+                    <li>Note: the bank's normal patch workflow was followed — the compromise was upstream</li>
+                    <li>Disable Bug and re-enable to reset the simulation</li>
+                  </ol>
+                </div>
+                {!flags['BUG_SUPPLY_CHAIN_COMPROMISE'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Vendor update pipeline is monitored. No active supply chain threat.
+                  </div>
+                )}
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🏭 Simulate Supply Chain Attack Chain</p>
+                  <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: '#9aa5b5' }}>Triggers the full 6-stage event chain: trusted vendor update → passes verification → deployed → vendor component compromised → backdoor activated → downstream assets exposed. Uses actual account data from the database as downstream assets.</p>
+                  <button
+                    onClick={handleSupplyChain}
+                    disabled={scLoading || !flags['BUG_SUPPLY_CHAIN_COMPROMISE']}
+                    className="primary-button"
+                    style={{ padding: '10px 20px' }}
+                  >
+                    {scLoading ? 'Simulating...' : '▶ Run Supply Chain Simulation'}
+                  </button>
+                  {scError && <div className="login-error" style={{ marginTop: '10px' }}>{scError}</div>}
+                  {scResult && (
+                    <div style={{ marginTop: '14px', background: scResult.status === 'ALREADY_ACTIVE' ? 'rgba(255,165,2,0.05)' : 'rgba(255,71,87,0.05)', border: `1px solid ${scResult.status === 'ALREADY_ACTIVE' ? 'rgba(255,165,2,0.2)' : 'rgba(255,71,87,0.2)'}`, borderRadius: '8px', padding: '14px 16px' }}>
+                      <p style={{ margin: '0 0 8px', fontWeight: 600, fontSize: '13px', color: scResult.status === 'ALREADY_ACTIVE' ? '#ffa502' : '#ff4757' }}>
+                        {scResult.status === 'ALREADY_ACTIVE' ? '⚡ Already Active' : '⚠ Simulation Complete'}
+                      </p>
+                      <p style={{ margin: '0 0 8px', fontSize: '12.5px', color: '#6b7a8d' }}>
+                        {scResult.status === 'ALREADY_ACTIVE' ? scResult.note : scResult.message}
+                      </p>
+                      {scResult.downstream_assets_at_risk && scResult.downstream_assets_at_risk.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#ff4757', marginBottom: '6px' }}>
+                            🎯 {scResult.downstream_assets_at_risk.length} Downstream Assets at Risk:
+                          </div>
+                          <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#9aa5b5' }}>
+                            {scResult.downstream_assets_at_risk.map((a, i) => (
+                              <div key={i} style={{ padding: '2px 0' }}>• Account #{a.id} — {a.account_type} ({a.status})</div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {scResult.events_generated && (
+                        <div style={{ marginTop: '10px', fontSize: '12px', fontFamily: 'monospace', color: '#9aa5b5' }}>
+                          {scResult.events_generated.map((ev, i) => <div key={i} style={{ padding: '2px 0' }}>• {ev}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* Phase 7 controls */}
+            {b.phase === 7 && (
+              <div>
+                <div style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.15)', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 600, color: '#39465d' }}>How to test Compromised Jump Server:</p>
+                  <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#6b7a8d', lineHeight: 2 }}>
+                    <li>Enable Bug above</li>
+                    <li>Click <strong>"▶ Run Jump Server Simulation"</strong> below</li>
+                    <li>Observe the six-stage chain: jump server compromised → privileged session abused → core banking access → database access → payment system access → high blast radius detected</li>
+                    <li>Note the blast radius: total accounts + user records exposed from a <strong>single privileged access point</strong></li>
+                    <li>Go to the <strong>Security</strong> tab → see all CRITICAL events with the affected asset count</li>
+                    <li>Disable Bug and re-enable to reset the simulation</li>
+                  </ol>
+                </div>
+                {!flags['BUG_PAM_JUMP_SERVER'] && (
+                  <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(46,213,115,0.08)', border: '1px solid rgba(46,213,115,0.2)', fontSize: '13px', color: '#6b7a8d', marginBottom: '16px' }}>
+                    ✓ Bug is disabled. Privileged jump server access is gated and monitored.
+                  </div>
+                )}
+                <div style={{ background: '#f8f9fb', borderRadius: '10px', padding: '18px 20px' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: '13.5px', fontWeight: 600, color: '#39465d' }}>🔑 Simulate Jump Server Compromise Chain</p>
+                  <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: '#9aa5b5' }}>Triggers the full 6-stage privileged-access attack chain using actual account and user records from the database to calculate a real blast radius. Demonstrates the force-multiplier effect of a single compromised privileged chokepoint.</p>
+                  <button
+                    onClick={handlePamJumpServer}
+                    disabled={pamLoading || !flags['BUG_PAM_JUMP_SERVER']}
+                    className="primary-button"
+                    style={{ padding: '10px 20px' }}
+                  >
+                    {pamLoading ? 'Simulating...' : '▶ Run Jump Server Simulation'}
+                  </button>
+                  {pamError && <div className="login-error" style={{ marginTop: '10px' }}>{pamError}</div>}
+                  {pamResult && (
+                    <div style={{ marginTop: '14px', background: pamResult.status === 'ALREADY_ACTIVE' ? 'rgba(255,165,2,0.05)' : 'rgba(255,71,87,0.05)', border: `1px solid ${pamResult.status === 'ALREADY_ACTIVE' ? 'rgba(255,165,2,0.2)' : 'rgba(255,71,87,0.2)'}`, borderRadius: '8px', padding: '14px 16px' }}>
+                      <p style={{ margin: '0 0 8px', fontWeight: 600, fontSize: '13px', color: pamResult.status === 'ALREADY_ACTIVE' ? '#ffa502' : '#ff4757' }}>
+                        {pamResult.status === 'ALREADY_ACTIVE' ? '⚡ Already Active' : '⚠ Simulation Complete'}
+                      </p>
+                      <p style={{ margin: '0 0 8px', fontSize: '12.5px', color: '#6b7a8d' }}>
+                        {pamResult.status === 'ALREADY_ACTIVE' ? pamResult.note : pamResult.message}
+                      </p>
+                      {pamResult.blast_radius && (
+                        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                          <div style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.25)' }}>
+                            <div style={{ fontSize: '10px', color: '#9aa5b5', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Blast Radius</div>
+                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#ff4757' }}>{pamResult.blast_radius} assets</div>
+                          </div>
+                          {pamResult.total_balance_at_risk !== undefined && (
+                            <div style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.25)' }}>
+                              <div style={{ fontSize: '10px', color: '#9aa5b5', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Funds at Risk</div>
+                              <div style={{ fontSize: '20px', fontWeight: 700, color: '#ff4757' }}>₹{Number(pamResult.total_balance_at_risk).toLocaleString('en-IN')}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {pamResult.affected_accounts && pamResult.affected_accounts.length > 0 && (
+                        <div style={{ marginBottom: '10px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#ff4757', marginBottom: '4px' }}>💳 {pamResult.affected_accounts.length} Accounts Exposed:</div>
+                          <div style={{ fontSize: '11.5px', fontFamily: 'monospace', color: '#9aa5b5', maxHeight: '90px', overflowY: 'auto' }}>
+                            {pamResult.affected_accounts.map((a, i) => (
+                              <div key={i} style={{ padding: '1px 0' }}>• #{a.id} {a.account_type} ({a.status})</div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {pamResult.affected_users && pamResult.affected_users.length > 0 && (
+                        <div style={{ marginBottom: '10px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#ff4757', marginBottom: '4px' }}>👤 {pamResult.affected_users.length} User Records Exposed:</div>
+                          <div style={{ fontSize: '11.5px', fontFamily: 'monospace', color: '#9aa5b5', maxHeight: '90px', overflowY: 'auto' }}>
+                            {pamResult.affected_users.map((u, i) => (
+                              <div key={i} style={{ padding: '1px 0' }}>• {u.name} ({u.role}) — {u.email}</div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {pamResult.events_generated && (
+                        <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#9aa5b5' }}>
+                          {pamResult.events_generated.map((ev, i) => <div key={i} style={{ padding: '2px 0' }}>• {ev}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

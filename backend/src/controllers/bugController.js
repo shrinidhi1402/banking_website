@@ -46,13 +46,15 @@ export function toggle(req, res, next) {
   try {
     const { flag } = req.body
     if (!flag) throw new ApiError(400, 'flag is required')
-    const validFlags = ['BUG_MFA', 'BUG_SQLI', 'BUG_IDOR', 'BUG_EXCESSIVE_PRIVILEGES', 'BUG_SECRET_EXPOSURE']
+    const validFlags = [
+      'BUG_MFA', 'BUG_SQLI', 'BUG_IDOR', 'BUG_EXCESSIVE_PRIVILEGES',
+      'BUG_SECRET_EXPOSURE', 'BUG_SUPPLY_CHAIN_COMPROMISE', 'BUG_PAM_JUMP_SERVER',
+    ]
     if (!validFlags.includes(flag)) throw new ApiError(400, `Invalid flag. Must be one of: ${validFlags.join(', ')}`)
     const newState = toggleBugFlag(flag)
     console.log(`[BugLab] ${flag} toggled → ${newState ? 'ON ⚠' : 'OFF ✓'} by Manager ${req.auth?.profile?.email}`)
 
     // --- CRQ Event Emission ---
-    // Fire and forget CRQ event based on flag toggle
     try {
       if (flag === 'BUG_MFA') {
         const eventType = newState ? 'control.disabled' : 'control.enabled';
@@ -63,6 +65,12 @@ export function toggle(req, res, next) {
       } else if (flag === 'BUG_IDOR') {
         const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
         emitCRQEvent(eventType, { vulnerability_id: "BUG_IDOR", cve_id_or_description: "Broken Access Control (IDOR) on accounts", asset_id: "bank-api", severity: "HIGH" });
+      } else if (flag === 'BUG_SUPPLY_CHAIN_COMPROMISE') {
+        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
+        emitCRQEvent(eventType, { vulnerability_id: "BUG_SUPPLY_CHAIN_COMPROMISE", cve_id_or_description: "Vendor supply chain compromise (ATT&CK T1195.002)", asset_id: "core-banking-db", severity: "CRITICAL" });
+      } else if (flag === 'BUG_PAM_JUMP_SERVER') {
+        const eventType = newState ? 'vuln.detected' : 'vuln.resolved';
+        emitCRQEvent(eventType, { vulnerability_id: "BUG_PAM_JUMP_SERVER", cve_id_or_description: "Compromised privileged jump server / PAM access point (CWE-250)", asset_id: "jump-server", severity: "CRITICAL" });
       }
     } catch (err) {
       console.error("[BugLab] Error emitting CRQ event:", err);
@@ -515,20 +523,14 @@ export async function insiderThreat(req, res, next) {
  *
  * SAFETY NOTE: This endpoint NEVER reads, copies, or returns any real environment
  * variable, Supabase service-role key, JWT secret, or production credential.
- * The values below are intentionally fictional and exist solely for the Bug Lab
- * simulation of CWE-798 (Use of Hard-coded Credentials).
  */
 export async function secretExposure(req, res, next) {
   try {
     if (!isBugEnabled('BUG_SECRET_EXPOSURE')) {
-      // When OFF: behave as though the endpoint does not exist
       throw new ApiError(404, 'Not found')
     }
-
     const callerId = req.auth.profile.id
     console.warn(`[BugLab] CLIENT_SIDE_SECRET_EXPOSURE: /api/bugs/secret accessed by ${req.auth.profile.email}`)
-
-    // Log the security event (once per access)
     await supabaseAdmin.from('security_events').insert({
       user_id: callerId,
       event_type: 'CLIENT_SIDE_SECRET_EXPOSURE',
@@ -536,10 +538,7 @@ export async function secretExposure(req, res, next) {
       description: 'Sensitive client-side configuration was accessed while the vulnerability was active.',
       ip_address: req.ip || '127.0.0.1',
     })
-
     // *** FAKE CREDENTIAL ONLY — NOT A REAL KEY ***
-    // This string is intentionally non-functional and exists exclusively for
-    // the BugLab / SIH security-demonstration environment.
     res.json({
       mode: 'VULNERABLE',
       vulnerability: 'CLIENT_SIDE_SECRET_EXPOSURE',
@@ -548,6 +547,304 @@ export async function secretExposure(req, res, next) {
       credential: 'BUGLAB_FAKE_ONLY_NOT_A_REAL_CREDENTIAL',
       flag: 'FLAG{CLIENT_SIDE_SECRET_EXPOSURE}',
       warning: '⚠ SIMULATED: This is a fake credential for the Risk Assessment Platform demo. No real secret is exposed.',
+    })
+  } catch (e) { next(e) }
+}
+
+// ─── Phase 6: Vendor / Supply Chain Compromise (ATT&CK T1195.002) ─────────────
+
+/**
+ * POST /api/bugs/trigger/supply-chain
+ *
+ * Simulates a trusted vendor pushing a compromised software update. The update
+ * passes the bank's normal trust/patch process before the backdoor activates.
+ *
+ * Attack chain:
+ *   VENDOR_UPDATE_RECEIVED → TRUST_VERIFICATION_PASSED → UPDATE_DEPLOYED
+ *   → VENDOR_COMPONENT_COMPROMISED → BACKDOOR_ACTIVATED → DOWNSTREAM_SYSTEMS_AT_RISK
+ *
+ * Uses the existing security_events table and existing supabaseAdmin accounts/users
+ * data to show which downstream assets are at risk. Idempotent: re-triggering
+ * while already active does NOT create duplicate chain events (guard on recent events).
+ */
+export async function triggerSupplyChain(req, res, next) {
+  try {
+    if (!isBugEnabled('BUG_SUPPLY_CHAIN_COMPROMISE')) {
+      throw new ApiError(400, 'BUG_SUPPLY_CHAIN_COMPROMISE is not enabled. Enable it first.')
+    }
+
+    const managerId = req.auth.profile.id
+    const managerEmail = req.auth.profile.email
+
+    // Idempotency: only create the chain once per activation.
+    // Check if BACKDOOR_ACTIVATED event already exists since last reset.
+    const { data: existingEvents } = await supabaseAdmin
+      .from('security_events')
+      .select('id, created_at')
+      .eq('event_type', 'BACKDOOR_ACTIVATED')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (existingEvents && existingEvents.length > 0) {
+      // Already triggered — return current state without re-logging
+      const { data: accounts } = await supabaseAdmin
+        .from('accounts')
+        .select('id, account_number, account_type, status')
+        .limit(8)
+
+      return res.json({
+        simulation: 'SUPPLY_CHAIN_COMPROMISE',
+        status: 'ALREADY_ACTIVE',
+        note: 'Attack chain already triggered for this activation. Disable and re-enable the flag to reset.',
+        downstream_assets_at_risk: accounts || [],
+      })
+    }
+
+    const attackerIp = '198.51.100.42' // Simulated attacker/vendor infrastructure IP
+    const vendorName = 'Apex Core Banking SDK v3.7.1'
+    const now = new Date()
+
+    // Stage 1: vendor update notification received
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'VENDOR_UPDATE_RECEIVED',
+      severity: 'LOW',
+      description: `SIMULATED: Trusted vendor update received — ${vendorName}. Update package passed initial signature verification. Normal patch-management workflow initiated.`,
+      ip_address: req.ip,
+    })
+
+    // Stage 2: trust/normal update verification passes
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'TRUST_VERIFICATION_PASSED',
+      severity: 'LOW',
+      description: `SIMULATED: Digital signature and hash verification passed for ${vendorName}. Package approved for deployment. No anomaly detected at this stage — the compromise is upstream.`,
+      ip_address: req.ip,
+    })
+
+    // Stage 3: update deployed
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'UPDATE_DEPLOYED',
+      severity: 'MEDIUM',
+      description: `SIMULATED: ${vendorName} deployed to production core-banking environment by ${managerEmail} via standard patch-management workflow. Deployment log shows no errors.`,
+      ip_address: req.ip,
+    })
+
+    // Stage 4: vendor component revealed as compromised
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'VENDOR_COMPONENT_COMPROMISED',
+      severity: 'CRITICAL',
+      description: `SIMULATED: ${vendorName} identified as compromised by threat intelligence. Upstream build pipeline was tampered before release. The vendor's signing keys were not revoked at time of distribution. ATT&CK T1195.002 — Compromise Software Supply Chain.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 5: simulated backdoor activates
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'BACKDOOR_ACTIVATED',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Malicious component within ${vendorName} activated C2 callback to ${attackerIp}. Backdoor is operating with the same trust level as the legitimate vendor SDK. Core banking subsystem now potentially accessible to attacker.`,
+      ip_address: attackerIp,
+    })
+
+    // Fetch the existing accounts from the DB as the downstream assets at risk
+    // (reusing project's real asset data, not a fabricated graph)
+    const { data: accounts, error: accErr } = await supabaseAdmin
+      .from('accounts')
+      .select('id, account_number, account_type, status')
+      .limit(8)
+
+    if (accErr) throw new ApiError(500, 'Database error fetching downstream assets')
+
+    // Stage 6: downstream assets at risk
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'DOWNSTREAM_SYSTEMS_AT_RISK',
+      severity: 'CRITICAL',
+      description: `SIMULATED: ${accounts.length} downstream banking accounts and core data systems identified as within blast radius of the compromised ${vendorName} component. All systems that loaded or interacted with the vendor SDK are potentially at risk. Isolation required.`,
+      ip_address: attackerIp,
+    })
+
+    try {
+      emitCRQEvent('incident.detected', {
+        type: 'SUPPLY_CHAIN_COMPROMISE_SIMULATION',
+        asset_id: 'core-banking-db',
+        details: `Simulated supply chain compromise via ${vendorName}. ${accounts.length} downstream assets at risk.`,
+      })
+    } catch (err) {
+      console.error('[BugLab] CRQ event error:', err)
+    }
+
+    res.json({
+      success: true,
+      simulation: 'SUPPLY_CHAIN_COMPROMISE',
+      vendor: vendorName,
+      attacker_c2_ip: attackerIp,
+      downstream_assets_at_risk: accounts,
+      events_generated: [
+        'VENDOR_UPDATE_RECEIVED (LOW)',
+        'TRUST_VERIFICATION_PASSED (LOW)',
+        'UPDATE_DEPLOYED (MEDIUM)',
+        'VENDOR_COMPONENT_COMPROMISED (CRITICAL)',
+        'BACKDOOR_ACTIVATED (CRITICAL)',
+        'DOWNSTREAM_SYSTEMS_AT_RISK (CRITICAL)',
+      ],
+      message: `Supply chain simulation complete. ${6} events generated. Check the Security panel.`,
+    })
+  } catch (e) { next(e) }
+}
+
+// ─── Phase 7: Compromised Privileged Access / Jump Server (CWE-250) ────────────
+
+/**
+ * POST /api/bugs/trigger/pam-jump-server
+ *
+ * Simulates an attacker compromising the centralized privileged jump server.
+ * Because the jump server sits at a privileged chokepoint, compromising it
+ * provides simulated access to ALL downstream systems reachable from it.
+ *
+ * Attack chain:
+ *   JUMP_SERVER_ACCESS_COMPROMISED → PRIVILEGED_SESSION_ABUSED
+ *   → CORE_BANKING_ACCESS → DATABASE_ACCESS → PAYMENT_SYSTEM_ACCESS
+ *   → HIGH_BLAST_RADIUS_DETECTED
+ *
+ * Impact is derived from the number of live accounts/users in the DB,
+ * making the blast-radius proportional to the real system state.
+ * Idempotent: repeated calls while active return current state without re-logging.
+ */
+export async function triggerPamJumpServer(req, res, next) {
+  try {
+    if (!isBugEnabled('BUG_PAM_JUMP_SERVER')) {
+      throw new ApiError(400, 'BUG_PAM_JUMP_SERVER is not enabled. Enable it first.')
+    }
+
+    const managerId = req.auth.profile.id
+    const managerEmail = req.auth.profile.email
+    const attackerIp = '203.0.113.77' // Simulated attacker jump-server egress IP
+
+    // Idempotency guard — don't re-log the full chain if already triggered.
+    const { data: existingEvents } = await supabaseAdmin
+      .from('security_events')
+      .select('id')
+      .eq('event_type', 'HIGH_BLAST_RADIUS_DETECTED')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (existingEvents && existingEvents.length > 0) {
+      const { data: accounts } = await supabaseAdmin
+        .from('accounts').select('id, account_number, account_type, user_id, status').limit(20)
+      const { data: users } = await supabaseAdmin
+        .from('users').select('id, name, role, email').limit(20)
+
+      return res.json({
+        simulation: 'PAM_JUMP_SERVER',
+        status: 'ALREADY_ACTIVE',
+        note: 'Attack chain already triggered for this activation. Disable and re-enable the flag to reset.',
+        affected_accounts: accounts || [],
+        affected_users: (users || []).map(u => ({ id: u.id, name: u.name, role: u.role, email: u.email })),
+      })
+    }
+
+    // Fetch downstream assets reachable from the jump server via the existing data model
+    const { data: accounts, error: accErr } = await supabaseAdmin
+      .from('accounts')
+      .select('id, account_number, account_type, user_id, status, balance')
+      .order('id')
+      .limit(20)
+    if (accErr) throw new ApiError(500, 'Database error')
+
+    const { data: users, error: usrErr } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email, role, status')
+      .order('id')
+      .limit(20)
+    if (usrErr) throw new ApiError(500, 'Database error')
+
+    const blastRadius = accounts.length + users.length
+    const totalBalance = accounts.reduce((s, a) => s + Number(a.balance ?? 0), 0)
+
+    // Stage 1
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'JUMP_SERVER_ACCESS_COMPROMISED',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Centralized privileged jump server compromised. Attacker gained initial foothold via stolen MFA token from ${attackerIp}. Jump server hosts administrative sessions for all critical banking systems. CWE-250: Execution with Unnecessary Privileges.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 2
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'PRIVILEGED_SESSION_ABUSED',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Attacker hijacked administrative session on jump server (${attackerIp}). Session belonged to ${managerEmail}. Privileged credentials for downstream systems now accessible. Jump server acts as force multiplier — one compromise reaches all dependent systems.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 3: core banking access
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'CORE_BANKING_ACCESS',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Attacker traversed from jump server to core banking system using stolen admin credentials. ${accounts.length} customer accounts are now within attacker reach. Total funds at risk: INR ${totalBalance.toLocaleString('en-IN')}.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 4: database access
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'DATABASE_ACCESS',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Direct database access established from compromised jump server session. ${users.length} user records (including PII, roles, and password hashes) now accessible. Attacker can perform data exfiltration or silent record manipulation.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 5: payment system access
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'PAYMENT_SYSTEM_ACCESS',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Transaction processing system reached via jump server privilege chain. Attacker has simulated ability to inject fraudulent transfers or block legitimate payments. All ACTIVE customer accounts in the transaction pipeline are exposed.`,
+      ip_address: attackerIp,
+    })
+
+    // Stage 6: blast radius summary
+    await supabaseAdmin.from('security_events').insert({
+      user_id: managerId,
+      event_type: 'HIGH_BLAST_RADIUS_DETECTED',
+      severity: 'CRITICAL',
+      description: `SIMULATED: Jump server compromise produced a blast radius of ${blastRadius} directly affected assets (${accounts.length} accounts + ${users.length} user records). A single privileged access point compromise has provided lateral movement across the entire banking infrastructure. Immediate containment and credential rotation required.`,
+      ip_address: attackerIp,
+    })
+
+    try {
+      emitCRQEvent('incident.detected', {
+        type: 'PAM_JUMP_SERVER_SIMULATION',
+        asset_id: 'jump-server',
+        details: `Blast radius: ${blastRadius} assets. ${accounts.length} accounts + ${users.length} users exposed.`,
+      })
+    } catch (err) {
+      console.error('[BugLab] CRQ event error:', err)
+    }
+
+    res.json({
+      success: true,
+      simulation: 'PAM_JUMP_SERVER',
+      blast_radius: blastRadius,
+      total_balance_at_risk: totalBalance,
+      affected_accounts: accounts,
+      affected_users: users.map(u => ({ id: u.id, name: u.name, role: u.role, email: u.email })),
+      events_generated: [
+        'JUMP_SERVER_ACCESS_COMPROMISED (CRITICAL)',
+        'PRIVILEGED_SESSION_ABUSED (CRITICAL)',
+        'CORE_BANKING_ACCESS (CRITICAL)',
+        'DATABASE_ACCESS (CRITICAL)',
+        'PAYMENT_SYSTEM_ACCESS (CRITICAL)',
+        'HIGH_BLAST_RADIUS_DETECTED (CRITICAL)',
+      ],
+      message: `Jump server simulation complete. Blast radius: ${blastRadius} assets. ${6} events generated. Check the Security panel.`,
     })
   } catch (e) { next(e) }
 }

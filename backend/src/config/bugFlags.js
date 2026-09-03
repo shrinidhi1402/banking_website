@@ -5,11 +5,13 @@
  * Internal use only. All flags default to OFF (safe) on every server restart.
  *
  * Flags:
- *  BUG_MFA                – Phase 1: MFA bypass / Account Takeover simulation
- *  BUG_SQLI               – Phase 2: SQL Injection vulnerability simulation
- *  BUG_IDOR               – Phase 3: Broken Access Control (IDOR) simulation
- *  BUG_EXCESSIVE_PRIVILEGES – Phase 4: Excessive Privileges / Insider Threat
- *  BUG_SECRET_EXPOSURE    – Phase 5: Client-Side Secret Exposure (CWE-798)
+ *  BUG_MFA                      – Phase 1: MFA bypass / Account Takeover simulation
+ *  BUG_SQLI                     – Phase 2: SQL Injection vulnerability simulation
+ *  BUG_IDOR                     – Phase 3: Broken Access Control (IDOR) simulation
+ *  BUG_EXCESSIVE_PRIVILEGES     – Phase 4: Excessive Privileges / Insider Threat
+ *  BUG_SECRET_EXPOSURE          – Phase 5: Client-Side Secret Exposure (CWE-798)
+ *  BUG_SUPPLY_CHAIN_COMPROMISE  – Phase 6: Vendor/Third-Party Software Supply Chain Compromise
+ *  BUG_PAM_JUMP_SERVER          – Phase 7: Compromised Privileged Access / Jump Server
  */
 
 const flags = {
@@ -18,6 +20,8 @@ const flags = {
   BUG_IDOR: false,
   BUG_EXCESSIVE_PRIVILEGES: false,
   BUG_SECRET_EXPOSURE: false,
+  BUG_SUPPLY_CHAIN_COMPROMISE: false,
+  BUG_PAM_JUMP_SERVER: false,
 }
 
 /**
