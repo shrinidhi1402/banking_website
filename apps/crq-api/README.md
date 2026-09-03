@@ -1,161 +1,112 @@
-﻿# CRQ Backend
+# crq-api
 
-FastAPI backend for CyberRisk Quantifier (CRQ) — Phase B0 Foundation.
+FastAPI service for the CyberRisk Quantifier — converts security events into
+Expected Annual Loss (EAL) via FAIR + a 10,000-iteration Monte Carlo, exposes a
+risk API + WebSocket, and runs the AI assistant (RAG over `packages/ai-knowledge`).
 
-## Quick Start
+Part of the monorepo — see the [root README](../../README.md) for the full
+setup + end-to-end test. The shared Supabase project is already provisioned.
 
-### 1. Start the full dev stack
+## Run (Docker — recommended)
+
+From the repo root:
 
 ```bash
-# From repo root (0xAxiom/)
-docker compose -f docker-compose.dev.yml up -d
-
-# Or use Make:
-make up
+docker compose -f docker-compose.dev.yml up -d --build      # = npm run crq:up
 ```
 
-Services started:
 | Service | URL |
 |---|---|
 | CRQ API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
-| Keycloak | http://localhost:8080 |
-| MinIO Console | http://localhost:9001 |
-| Redpanda Console | http://localhost:8085 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| Health | http://localhost:8000/health |
+| Grafana | http://localhost:3002 (admin / admin123) |
 | Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3002 (admin/admin123) |
-| GlitchTip | http://localhost:8090 |
+| Redis | localhost:6379 |
 
-### 2. Run database migrations
+After editing anything under `src/`, rebuild so the container picks it up:
 
 ```bash
-# Inside container (after stack is up):
-docker compose -f docker-compose.dev.yml exec crq-api alembic upgrade head
-
-# Or via Make:
-make migrate
-
-# Locally (direct DB):
-cd backend
-CRQ_DATABASE_URL_DIRECT=postgresql+asyncpg://crq_app:crq_app_password@localhost:5433/crq alembic upgrade head
+docker compose -f docker-compose.dev.yml up -d --build crq-api crq-worker
 ```
 
-### 3. Run the API locally (without Docker)
+Logs: `docker compose -f docker-compose.dev.yml logs -f crq-api`
+
+## Run (native, no Docker)
+
+Requires Python 3.12 + [uv](https://docs.astral.sh/uv/):
 
 ```bash
-cd backend
-
-# Install deps (requires Python 3.12 + uv)
-uv venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+cd apps/crq-api
+uv venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
-
-# Copy env file
-cp .env.example .env   # Edit as needed
-
-# Start server
+cp .env.example .env                            # then fill it (see below)
 uvicorn crq.main:app --reload --port 8000
 ```
 
-### 4. Run tests
+Native mode can't reach the Docker `redis` hostname — set
+`CRQ_REDIS_URL=redis://localhost:6379/0` (and the two Celery URLs) in `.env`.
 
-```bash
-# Unit + property tests only (no docker required):
-cd backend
-pytest tests/ -m "unit or property" -v
+## Env (`apps/crq-api/.env`)
 
-# All tests including integration (requires docker stack):
-pytest tests/ -v
+`CRQ_`-prefixed, read by `src/crq/core/config.py`.
 
-# Via Make (inside container):
-make test
-```
-
-### 5. Check pgvector + TimescaleDB extensions
-
-```bash
-make check-extensions
-# or:
-docker compose -f docker-compose.dev.yml exec postgres psql -U postgres -d crq -c "\dx"
-```
-
-Expected output includes `timescaledb` and `vector`.
-
----
-
-## DISABLE_AUTH Dev Flag
-
-**All auth is disabled by default** (`CRQ_DISABLE_AUTH=true`).
-
-When disabled, every request returns a fake `admin` dev user:
-```json
-{"sub": "dev-user-...", "email": "dev@crq.local", "role": "admin"}
-```
-
-This means teammates can write and test any endpoint **without needing Keycloak running**.
-
-### To enable real Keycloak auth:
-
-1. Ensure Keycloak is healthy: `docker compose -f docker-compose.dev.yml up keycloak`
-2. Set in `.env`: `CRQ_DISABLE_AUTH=false`
-3. Get a token:
-   ```bash
-   curl -X POST http://localhost:8080/realms/crq/protocol/openid-connect/token \
-     -d "grant_type=password&client_id=crq-api&username=dev-admin&password=admin123&client_secret=change-me-in-production"
-   ```
-4. Use the `access_token` in requests: `Authorization: Bearer <token>`
-
----
-
-## Folder Structure
-
-```
-backend/
-├── src/crq/
-│   ├── main.py            # FastAPI app entry point
-│   ├── core/              # Config, DB, logging, telemetry, middleware
-│   ├── api/v1/            # Thin FastAPI routers (stubs — filled in B1+)
-│   ├── auth/              # Keycloak JWT + RBAC (B0.3)
-│   ├── models/            # SQLAlchemy ORM models (B1.1+)
-│   ├── schemas/           # Pydantic DTOs
-│   ├── ingestion/         # Event ingestion + connectors (B2.1)
-│   ├── risk_engine/       # FAIR + Monte Carlo (B1.3)
-│   ├── optimizer/         # Knapsack + ROSI (B3.2)
-│   ├── scenario/          # What-if simulator (B3.1)
-│   ├── compliance/        # Framework mapping (B5.1)
-│   ├── threat_intel/      # CISA KEV, NVD (B2.4)
-│   ├── control_eval/      # Control effectiveness (B1.4)
-│   ├── asset_criticality/ # Criticality modeling (B1.2)
-│   ├── ai_gateway/        # LLM pipeline (B4)
-│   ├── query_engine/      # NL query translation (B4.2)
-│   ├── notifications/     # WebSocket + webhooks (B2.6)
-│   ├── audit/             # Immutable audit log (B5.5)
-│   └── workers/           # Celery tasks (B2.3+)
-├── tests/
-│   ├── unit/              # No external deps — always run
-│   ├── integration/       # Requires docker-compose up
-│   └── property/          # Hypothesis FAIR math invariants
-├── alembic/               # DB migrations
-├── Dockerfile             # Multi-stage, non-root (uid 1001)
-└── pyproject.toml
-```
-
-## Tech Stack (Phase B0)
-
-| Layer | Choice |
+| Key | Notes |
 |---|---|
-| Language | Python 3.12 |
-| Framework | FastAPI + Pydantic v2 |
-| ORM | SQLAlchemy 2.0 async |
-| Migrations | Alembic |
-| Database | PostgreSQL 16 + TimescaleDB + pgvector |
-| Cache/Broker | Redis 7 |
-| Event bus | Redpanda (Kafka API) |
-| Object storage | MinIO |
-| Auth | Keycloak (gated by DISABLE_AUTH) |
-| Logging | structlog (JSON) |
-| Metrics | prometheus-client |
-| Tracing | OpenTelemetry → Tempo |
-| Testing | pytest + pytest-asyncio + hypothesis |
+| `CRQ_SUPABASE_URL` | `postgresql+asyncpg://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres` — URL-encode the password |
+| `CRQ_SUPABASE_SERVICE_KEY` | project API key |
+| `CRQ_SUPABASE_JWT_SECRET` | project JWT secret (used when auth is on) |
+| `CRQ_GROQ_API_KEY` | free key from console.groq.com — powers `/api/v1/query` |
+| `CRQ_DISABLE_AUTH` | `true` in dev — every request runs as a dev admin, no token needed |
+| `CRQ_REDIS_URL` / `CRQ_CELERY_*` | `redis://redis:6379/*` in Docker, `redis://localhost:6379/*` native |
 
-See `architecture.md` §6 and §12 for the complete rationale.
+## Key endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/risk/summary?scope=org\|asset` | latest EAL snapshot for a scope |
+| GET | `/api/v1/risk/contributors?top=N` | ranked assets + vulnerabilities |
+| GET | `/api/v1/risk/history?scope=org` | EAL snapshots over time |
+| GET | `/api/v1/vulnerabilities` | vulnerability backlog |
+| POST | `/api/v1/events` | ingest a `control.*` / `vuln.*` event (idempotent on `event_id`) |
+| POST | `/api/v1/query` | natural-language question → grounded answer |
+| WS | `/ws/updates?org_id=1` | live `eal.updated` / `risk.alert` pushes |
+
+## Event pipeline (`src/crq/ingestion/pipeline.py`)
+
+`POST /api/v1/events` runs synchronously:
+
+- **`control.disabled`** (e.g. bank site turns MFA bypass ON) → drops that
+  control's effectiveness for the asset → recompute. `control.enabled` restores it.
+- **`vuln.detected`** → upserts a `crq_vulnerabilities` row + asset link (so it
+  appears in `/risk/contributors`) → recompute at higher exposure.
+  `vuln.resolved` deletes the row and recomputes lower.
+- Every recompute writes a per-asset EAL snapshot **and** an org-scope rollup
+  snapshot (sum of the latest per-asset EAL), then broadcasts the new figures
+  over the WebSocket. A ±20% swing is flagged as `risk.alert`.
+
+## Tests
+
+```bash
+cd apps/crq-api
+pytest tests/ -m "unit or property" -v      # no external deps
+```
+
+## Layout
+
+```
+src/crq/
+  main.py            FastAPI app factory + /health
+  core/              config, async DB engine, logging, telemetry, middleware
+  api/v1/            routers: risk, vulnerabilities, events, query, scenarios, …
+  api/ws.py          WebSocket /ws/updates
+  ingestion/         event pipeline + scanner connectors
+  risk_engine/       FAIR + Monte Carlo (fair.py, monte_carlo.py)
+  ai_gateway/        LLM client + RAG pipeline + prompts
+  query_engine/      NL → structured query translation + retrieval
+  optimizer/ scenario/ compliance/ threat_intel/ control_eval/ asset_criticality/
+  notifications/     ws_manager, webhooks
+  models/ schemas/   SQLAlchemy models + Pydantic DTOs
+  workers/           Celery tasks
+Dockerfile           multi-stage, non-root (uid 1001)
+```

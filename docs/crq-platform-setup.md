@@ -11,15 +11,12 @@ Ensure you have the following installed locally:
 
 ---
 
-## 🗄️ 2. Database Setup (Supabase)
-This project uses Supabase as the central database and identity provider. 
-1. Create a new Supabase project (or use your existing one).
-2. Go to the SQL Editor in your Supabase dashboard.
-3. Run the following migration files located in `db/crq/` in this exact order:
-   - `001_crq_tables.sql` (Creates the FAIR risk tables and pgvector schema)
-   - `002_crq_indexes.sql` (Applies performance indexes)
-   - `003_crq_seed_demo.sql` (Seeds mock vulnerabilities and frameworks)
-   - `004_fix_ingested_events_org_id.sql` (Aligns `crq_ingested_events.org_id` with the risk engine)
+## 🗄️ 2. Database (Supabase)
+The shared Supabase project already has every table and the demo seed data in
+place — you don't need to touch the database to run or test the stack.
+
+The SQL that defines it lives in `db/crq/` (schema, indexes, seed) and
+`db/bank/schema.sql`, kept for reference only.
 
 ---
 
@@ -87,20 +84,22 @@ The CRQ Dashboard tab (Manager login) talks directly to the CRQ API on `:8000`.
 ---
 
 ## 🧪 6. How to Test the Integration
-1. Open the Banking App (`http://localhost:5173`).
-2. Log in as a **Manager**.
-3. Open two browser windows side-by-side:
-   - Window 1: Navigate to the **CRQ Dashboard** tab.
-   - Window 2: Navigate to the **Bug Lab** tab.
-4. **Trigger a Live Risk Event:** In the Bug Lab, toggle `MFA Bypass` to ON.
-5. **Watch the Magic:** 
-   - The React app sends a `control.disabled` webhook to the FastAPI backend.
-   - FastAPI triggers the Celery worker to run 10,000 Monte Carlo FAIR simulations.
-   - The new Expected Annual Loss (EAL) is pushed over WebSockets.
-   - Window 1 (CRQ Dashboard) will turn red and update the Financial Risk live on screen without a page refresh!
+Quick version:
+
+1. Open `http://localhost:5173`, log in as a **Manager**.
+2. Two tabs: **CRQ Dashboard** and **Security** (or **Bug Lab**).
+3. In the Security/Bug Lab tab, toggle **MFA Bypass → ON**.
+4. `bank-api` posts a `control.disabled` event to `POST :8000/api/v1/events`;
+   the CRQ engine runs a 10,000-iteration Monte Carlo FAIR recompute and pushes
+   the new EAL over the WebSocket.
+5. The CRQ Dashboard tab updates live — headline EAL moves, red "Live recompute"
+   banner, chat system line — with no page refresh. Toggle it OFF to restore.
+
+The full test matrix (manual finding form, contributor rows, DB/WS/console
+verification, idempotency) is in the [root README](../README.md) §5.
 
 ### Chatting with the AI
-In the CRQ Dashboard, use the AI Chat box to ask:
-> *"What is our biggest risk right now?"* or *"What happens if I patch the Web Application Firewall?"*
-
-The AI Gateway will intercept this, convert it to a `pgvector` RAG query, pull the framework context, and respond intelligently based on your live database!
+In the CRQ Dashboard AI box, ask *"What is our biggest risk right now?"* or
+*"What happens if I patch the Web Application Firewall?"*. The AI gateway turns it
+into a RAG query over `packages/ai-knowledge` + the live database and answers
+with grounded context. Requires `CRQ_GROQ_API_KEY`.

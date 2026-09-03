@@ -228,20 +228,26 @@ All bug flags are stored **in memory** on the backend server. They **automatical
 
 ---
 
-## Files Modified
+## Files
 
-### Backend
-| File | Change |
+### bank-api (`apps/bank-api/`)
+| File | Role |
 |---|---|
-| `backend/src/config/bugFlags.js` | NEW – in-memory flag store |
-| `backend/src/config/pgClient.js` | NEW – raw pg pool for SQLi |
-| `backend/src/config/env.js` | Added optional `SUPABASE_DB_URL` |
-| `backend/src/controllers/bugController.js` | NEW – all bug simulation logic |
-| `backend/src/controllers/authController.js` | Phase 1: MFA bypass when flag ON |
-| `backend/src/controllers/customerController.js` | Phase 3: IDOR in account/transactions |
-| `backend/src/routes/index.js` | Added `/api/bugs/*` routes |
+| `src/config/bugFlags.js` | in-memory flag store (resets to `flags.json` on restart) |
+| `src/config/pgClient.js` | raw pg pool for true SQLi (needs `SUPABASE_DB_URL`) |
+| `src/config/env.js` | `SUPABASE_DB_URL`, `CRQ_BASE_URL`, `CRQ_ORG_ID` |
+| `src/controllers/bugController.js` | all bug simulation logic + `CRQ_FLAG_MAP` |
+| `src/controllers/authController.js` | Phase 1: MFA bypass when flag ON |
+| `src/controllers/customerController.js` | Phase 3: IDOR in account/transactions |
+| `src/services/crqClient.js` | emits `control.*` / `vuln.*` events to the CRQ engine |
+| `src/routes/index.js` | `/api/bugs/*` routes |
 
-### Frontend
-| File | Change |
+### bank-web (`apps/bank-web/`)
+| File | Role |
 |---|---|
-| `src/App.jsx` | Added Bug Lab nav item, BugLabPanel component, MFA bypass login handling |
+| `src/App.jsx` | Bug Lab / Security panels (Manager), MFA-bypass login handling |
+| `src/CRQDashboard.jsx` | CRQ Dashboard tab — updates live when a flag is toggled |
+
+Toggling a flag calls `POST /api/bugs/toggle`, which flips the flag **and** emits
+the matching CRQ event so the risk engine recomputes EAL. See the
+[root README](../README.md) §5 Scenario C.
