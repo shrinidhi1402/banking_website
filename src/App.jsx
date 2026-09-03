@@ -25,6 +25,54 @@ async function apiGet(path, token) {
   return data
 }
 
+function DetailsModal({ endpoint, token, title, onClose, initialData }) {
+  const [data, setData] = useState(initialData || null)
+  const [loading, setLoading] = useState(!initialData)
+  
+  useEffect(() => {
+    if (endpoint) {
+      setLoading(true)
+      apiGet(endpoint, token).then(res => { setData(res); setLoading(false) }).catch(err => { setData({ error: err.message }); setLoading(false) })
+    }
+  }, [endpoint, token])
+  
+  const renderValue = (val) => {
+    if (val === null || val === undefined) return '—'
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No'
+    return String(val)
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999,backdropFilter:'blur(2px)'}}>
+      <div className="modal-content" onClick={e=>e.stopPropagation()} style={{background:'var(--surface)',padding:'24px',borderRadius:'12px',width:'440px',maxHeight:'80vh',overflow:'auto',boxShadow:'0 10px 40px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.1)'}}>
+        <h3 style={{marginBottom:'16px',color:'#fff', fontSize: '16px', fontWeight: 600}}>{title}</h3>
+        {loading ? <p style={{color:'#9aa5b5'}}>Fetching details...</p> : (
+          <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
+            {Object.entries(data || {}).map(([key, val]) => {
+              if (key === 'users' && typeof val === 'object' && val !== null) {
+                 return Object.entries(val).map(([uk, uv]) => (
+                   <div key={`u_${uk}`} style={{display:'flex',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.05)',paddingBottom:'8px'}}>
+                     <span style={{color:'#9aa5b5',textTransform:'capitalize'}}>{uk.replace(/_/g, ' ')}</span>
+                     <strong style={{color:'#fff',textAlign:'right'}}>{renderValue(uv)}</strong>
+                   </div>
+                 ))
+              }
+              if (typeof val === 'object' && val !== null) return null // skip other nested objects for simplicity
+              return (
+                <div key={key} style={{display:'flex',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.05)',paddingBottom:'8px'}}>
+                  <span style={{color:'#9aa5b5',textTransform:'capitalize'}}>{key.replace(/_/g, ' ')}</span>
+                  <strong style={{color:'#fff',textAlign:'right',maxWidth:'60%',wordBreak:'break-word'}}>{renderValue(val)}</strong>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <button className="primary-button" style={{marginTop:'24px',width:'100%',justifyContent:'center'}} onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
 
 async function apiPut(path, body, token) {
   const res = await fetch(`${API}${path}`, {
@@ -312,7 +360,21 @@ export default function App() {
                 <p className="subheading">Here is what is happening with your accounts today.</p>
               </div>
               <div className="heading-actions">
-                <button className="secondary-button" onClick={() => action('Statement export is ready to download')}><Icon>⇩</Icon> Export</button>
+                {active === 'Reports' && (
+                  <button className="secondary-button" onClick={() => {
+                    const t = managerData?.reports?.totals
+                    if (!t) return
+                    const csv = `Metric,Value\nTotal Customers,${t.customers}\nTotal Employees,${t.employees}\nTotal Transactions,${t.transactions}\nTotal Deposits,${t.deposits}\nPending Requests,${t.pendingRequests}\nSuspicious Transactions,${t.suspiciousTransactions}`
+                    const blob = new Blob([csv], { type: 'text/csv' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `northstar-reports-${new Date().toISOString().split('T')[0]}.csv`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                    action('Report exported successfully')
+                  }}><Icon>⇩</Icon> Export CSV</button>
+                )}
                 {roleKey === 'Customer' && <button className="primary-button" onClick={() => setActive('Transfer money')}><Icon>↗</Icon> Transfer money</button>}
               </div>
             </div>
@@ -695,7 +757,7 @@ function WorkspacePage({ active, action, customerData, employeeData, managerData
   else if (active === 'Employees'  && isMgr)             Content = <Directory active={active} action={action} employeeData={managerData} session={session} refreshEmployee={refreshManager} isMgr={isMgr} />
   else if (active === 'Transactions' && isCust)          Content = <TransactionsPanel action={action} customerData={customerData} />
   else if (active === 'Transactions' && isEmp)           Content = <GenericPanel active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
-  else if (active === 'Transactions' && isMgr)           Content = <ManagerTransactionsPanel action={action} managerData={managerData} />
+  else if (active === 'Transactions' && isMgr)           Content = <ManagerTransactionsPanel action={action} managerData={managerData} session={session} />
   else if (active === 'Requests'   && isEmp)             Content = <GenericPanel active={active} action={action} employeeData={employeeData} session={session} refreshEmployee={refreshEmployee} />
   else if (active === 'Requests'   && isMgr)             Content = <ManagerRequestsPanel action={action} managerData={managerData} session={session} refreshManager={refreshManager} />
   else if (active === 'Beneficiaries' && isCust)         Content = <BeneficiariesPanel action={action} customerData={customerData} session={session} refresh={refresh} />
@@ -783,74 +845,109 @@ function TransferForm({ action, customerData, session, refresh }) {
   )
 }
 
-function TransactionsPanel({ action, customerData }) {
-  const transactionsList = customerData?.transactions || []
+function TransactionsPanel({ action, customerData, session }) {
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('All statuses')
+  const [viewingTx, setViewingTx] = useState(null)
+  
+  let transactionsList = customerData?.transactions || []
+  if (status !== 'All statuses') transactionsList = transactionsList.filter(t => (t.status || 'COMPLETED').toUpperCase() === status.toUpperCase())
+  if (search) transactionsList = transactionsList.filter(t => (t.description || t.transaction_type).toLowerCase().includes(search.toLowerCase()) || String(t.amount).includes(search))
+
   return (
-    <div className="panel generic-panel">
-      <div className="directory-toolbar">
-        <div className="search"><span>⌕</span><input placeholder="Search activity..." /></div>
-        <button className="select-button">All statuses ⌄</button>
+    <>
+      {viewingTx && <DetailsModal title={`Transaction ${viewingTx}`} initialData={transactionsList.find(t => t.id === viewingTx)} onClose={() => setViewingTx(null)} />}
+      <div className="panel generic-panel">
+        <div className="directory-toolbar">
+          <div className="search"><span>⌕</span><input placeholder="Search activity..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <select className="select-button" value={status} onChange={e => setStatus(e.target.value)} style={{background:'transparent', color:'inherit', border:'none', outline:'none', cursor:'pointer'}}>
+            <option>All statuses</option>
+            <option>COMPLETED</option>
+            <option>PENDING</option>
+            <option>FAILED</option>
+          </select>
+        </div>
+        {transactionsList.length === 0 ? (
+          <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No transactions found.</div>
+        ) : transactionsList.map(tx => {
+          const isDebit = tx.sender_account_id === customerData?.account?.id
+          return (
+            <div className="generic-row" key={tx.id}>
+              <span className={`transaction-icon ${isDebit ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
+              <div><b>{tx.description || tx.transaction_type}</b><small>{tx.transaction_type} - {new Date(tx.created_at).toLocaleDateString()}</small></div>
+              <strong>{(isDebit ? '-' : '+') + formatINR(Math.abs(tx.amount))}</strong>
+              <button className="text-button" onClick={() => setViewingTx(tx.id)}>View →</button>
+            </div>
+          )
+        })}
       </div>
-      {transactionsList.length === 0 ? (
-        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No transactions found.</div>
-      ) : transactionsList.map(tx => {
-        const isDebit = tx.sender_account_id === customerData?.account?.id
-        return (
-          <div className="generic-row" key={tx.id}>
-            <span className={`transaction-icon ${isDebit ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
-            <div><b>{tx.description || tx.transaction_type}</b><small>{tx.transaction_type} - {new Date(tx.created_at).toLocaleDateString()}</small></div>
-            <strong>{(isDebit ? '-' : '+') + formatINR(Math.abs(tx.amount))}</strong>
-            <button className="text-button" onClick={() => action(`Opening ${tx.id}`)}>View →</button>
-          </div>
-        )
-      })}
-    </div>
+    </>
   )
 }
 
 // ─── Manager Transactions Panel ───────────────────────────────────────────────
-function ManagerTransactionsPanel({ action, managerData }) {
-  const txList = managerData?.transactions || []
+function ManagerTransactionsPanel({ action, managerData, session }) {
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('All types')
+  const [viewingTx, setViewingTx] = useState(null)
+  
+  let txList = managerData?.transactions || []
+  if (typeFilter !== 'All types') txList = txList.filter(t => t.transaction_type === typeFilter)
+  if (search) txList = txList.filter(t => (t.description || t.transaction_type).toLowerCase().includes(search.toLowerCase()) || String(t.amount).includes(search))
+
+  const uniqueTypes = [...new Set((managerData?.transactions || []).map(t => t.transaction_type))]
+
   return (
-    <div className="panel generic-panel">
-      <div className="directory-toolbar">
-        <div className="search"><span>⌕</span><input placeholder="Search transactions..." /></div>
-        <button className="select-button">All types ⌄</button>
-      </div>
-      {txList.length === 0 ? (
-        <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No transactions found.</div>
-      ) : txList.map(tx => {
-        const senderName   = tx.sender?.users?.name   || 'Unknown'
-        const receiverName = tx.receiver?.users?.name || 'Unknown'
-        return (
-          <div className="generic-row" key={tx.id}>
-            <span className={`transaction-icon ${(tx.amount >= 10000) ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
-            <div>
-              <b>{tx.description || tx.transaction_type}</b>
-              <small>{senderName} → {receiverName} · {new Date(tx.created_at).toLocaleDateString()}</small>
+    <>
+      {viewingTx && <DetailsModal title={`Transaction ${viewingTx}`} token={session?.access_token} endpoint={`/manager/transactions/${viewingTx}`} onClose={() => setViewingTx(null)} />}
+      <div className="panel generic-panel">
+        <div className="directory-toolbar">
+          <div className="search"><span>⌕</span><input placeholder="Search transactions..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <select className="select-button" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{background:'transparent', color:'inherit', border:'none', outline:'none', cursor:'pointer'}}>
+            <option>All types</option>
+            {uniqueTypes.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </div>
+        {txList.length === 0 ? (
+          <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No transactions found.</div>
+        ) : txList.map(tx => {
+          const senderName   = tx.sender?.users?.name   || 'Unknown'
+          const receiverName = tx.receiver?.users?.name || 'Unknown'
+          return (
+            <div className="generic-row" key={tx.id}>
+              <span className={`transaction-icon ${(tx.amount >= 10000) ? 'debit' : 'credit'}`}>{tx.transaction_type[0]}</span>
+              <div>
+                <b>{tx.description || tx.transaction_type}</b>
+                <small>{senderName} → {receiverName} · {new Date(tx.created_at).toLocaleDateString()}</small>
+              </div>
+              <strong>{formatINR(Math.abs(tx.amount))}</strong>
+              <span className={`status ${(tx.status || 'completed').toLowerCase()}`}>{tx.status || 'COMPLETED'}</span>
+              {(tx.amount >= 10000) && <span className="status review" style={{marginLeft:'6px'}}>⚠ Suspicious</span>}
+              <button className="text-button" onClick={() => setViewingTx(tx.id)}>View →</button>
             </div>
-            <strong>{formatINR(Math.abs(tx.amount))}</strong>
-            <span className={`status ${(tx.status || 'completed').toLowerCase()}`}>{tx.status || 'COMPLETED'}</span>
-            {(tx.amount >= 10000) && <span className="status review" style={{marginLeft:'6px'}}>⚠ Suspicious</span>}
-            <button className="text-button" onClick={() => action(`Transaction ${tx.id}`)}>View →</button>
-          </div>
-        )
-      })}
-    </div>
+          )
+        })}
+      </div>
+    </>
   )
 }
 
 // ─── Manager Requests Panel ───────────────────────────────────────────────────
 function ManagerRequestsPanel({ action, managerData, session, refreshManager }) {
   const [handling, setHandling] = useState(null)
-  const requests = managerData?.requests || []
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('All statuses')
+  
+  let requests = managerData?.requests || []
+  if (status !== 'All statuses') requests = requests.filter(r => r.status === status)
+  if (search) requests = requests.filter(r => (r.request_type || '').toLowerCase().includes(search.toLowerCase()) || (r.users?.name || '').toLowerCase().includes(search.toLowerCase()))
 
-  const handleDecision = async (id, status) => {
+  const handleDecision = async (id, decision) => {
     if (!id || !session) return
     setHandling(id)
     try {
-      await apiPut(`/manager/requests/${id}`, { status }, session.access_token)
-      action(`Request ${status.toLowerCase()} successfully`)
+      await apiPut(`/manager/requests/${id}`, { status: decision }, session.access_token)
+      action(`Request ${decision.toLowerCase()} successfully`)
       if (refreshManager) await refreshManager()
     } catch (e) {
       action(e.message || 'Error processing request')
@@ -862,8 +959,13 @@ function ManagerRequestsPanel({ action, managerData, session, refreshManager }) 
   return (
     <div className="panel generic-panel">
       <div className="directory-toolbar">
-        <div className="search"><span>⌕</span><input placeholder="Search requests..." /></div>
-        <button className="select-button">All statuses ⌄</button>
+        <div className="search"><span>⌕</span><input placeholder="Search requests..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <select className="select-button" value={status} onChange={e => setStatus(e.target.value)} style={{background:'transparent', color:'inherit', border:'none', outline:'none', cursor:'pointer'}}>
+          <option>All statuses</option>
+          <option>PENDING</option>
+          <option>APPROVED</option>
+          <option>REJECTED</option>
+        </select>
       </div>
       {requests.length === 0 ? (
         <div style={{padding:'20px', textAlign:'center', color:'#9aa5b5'}}>No requests found.</div>
@@ -883,7 +985,7 @@ function ManagerRequestsPanel({ action, managerData, session, refreshManager }) 
                 <button className="primary-button" disabled={handling === req.id} style={{padding:'6px 12px', fontSize:'13px'}} onClick={() => handleDecision(req.id, 'APPROVED')}>{handling === req.id ? '...' : 'Approve'}</button>
               </div>
             ) : (
-              <span className={`status ${req.status?.toLowerCase()}`}>{req.status}</span>
+              <span className={`status ${req.status === 'APPROVED' ? 'active' : req.status === 'REJECTED' ? 'review' : 'warning'}`}>{req.status}</span>
             )}
           </div>
         )
@@ -1044,7 +1146,6 @@ function ManagerSecurityPanel({ action, managerData, session, refreshManager, on
               <small>{ev.description} • {new Date(ev.created_at).toLocaleString()}{ev.ip_address ? ` • IP: ${ev.ip_address}` : ''}</small>
             </div>
             <span className={`status ${ev.severity === 'CRITICAL' || ev.severity === 'HIGH' ? 'review' : ev.severity === 'MEDIUM' ? 'scheduled' : 'active'}`}>{ev.severity}</span>
-            <button className="text-button" onClick={() => action(`Event ${ev.id}`)}>View →</button>
           </div>
         ))}
       </div>
@@ -1077,9 +1178,9 @@ function ManagerReportsPanel({ managerData }) {
           ['Total Deposits',     fmtCur(t.deposits),   'Across all accounts'],
         ].map(([label, value, note]) => (
           <div className="metric-card" key={label}>
-            <div className="metric-top"><span>{label}</span><span className="metric-icon tint-0">\u2197</span></div>
+            <div className="metric-top"><span>{label}</span><span className="metric-icon tint-0">↗</span></div>
             <strong>{value}</strong>
-            <small><span>\u2197</span> {note}</small>
+            <small><span>↗</span> {note}</small>
           </div>
         ))}
       </section>
@@ -1089,9 +1190,9 @@ function ManagerReportsPanel({ managerData }) {
           ['Suspicious Transactions', fmt(t.suspiciousTransactions), t.suspiciousTransactions > 0 ? `${t.suspiciousTransactions} flagged` : 'None flagged'],
         ].map(([label, value, note], index) => (
           <div className="metric-card" key={label}>
-            <div className="metric-top"><span>{label}</span><span className={`metric-icon tint-${index + 2}`}>{index === 0 ? '\u25d2' : '!'}</span></div>
+            <div className="metric-top"><span>{label}</span><span className={`metric-icon tint-${index + 2}`}>{index === 0 ? '◒' : '!'}</span></div>
             <strong>{value}</strong>
-            <small className={note.includes('attention') || note.includes('flagged') ? 'warning-text' : ''}><span>\u2197</span> {note}</small>
+            <small className={note.includes('attention') || note.includes('flagged') ? 'warning-text' : ''}><span>↗</span> {note}</small>
           </div>
         ))}
       </section>
@@ -1376,7 +1477,8 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState(null)
   const [searching, setSearching] = useState(false)
-  let rows = customers
+  const [viewingId, setViewingId] = useState(null)
+  let rows = []
 
   if (active === 'Employees') {
     if (employeeData?.employees && employeeData.employees.length > 0) {
@@ -1384,49 +1486,64 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
         e.users?.name || `Employee ${e.user_id}`,
         e.department || 'Staff',
         e.branch || '—',
-        e.users?.status || 'ACTIVE'
+        e.users?.status || 'ACTIVE',
+        e.id // store ID to fetch details later
       ])
-    } else {
-      rows = []
     }
   } else if (active === 'Customers' && employeeData?.customers) {
     rows = employeeData.customers.map(c => [
       c.users?.name || c.name || 'Unknown',
       c.customer_id || c.email || '',
       'Northstar Secure',
-      c.users?.status || c.status || 'Active'
+      c.users?.status || c.status || 'Active',
+      c.id // store ID
     ])
   }
 
-  // If search results exist, display them instead (may include injection results)
   const displayRows = searchResults !== null ? searchResults : rows
 
   async function handleSearch(e) {
     const val = e.target.value
     setSearchQuery(val)
     if (!val.trim()) { setSearchResults(null); return }
-    setSearching(true)
-    try {
-      const token = session?.access_token
-      const endpoint = isMgr ? '/manager/customers' : '/employee/customers'
-      const data = await apiGet(`${endpoint}?search=${encodeURIComponent(val)}`, token)
-      // Data could be customer_profiles (normal) or raw users (injected) — display whatever came back
-      const normalized = Array.isArray(data) ? data.map(r => [
-        r.users?.name || r.name || 'Unknown',
-        r.customer_id || r.email || r.id || '',
-        r.role || 'Northstar Secure',
-        r.users?.status || r.status || 'Active'
-      ]) : []
-      setSearchResults(normalized)
-    } catch {
-      setSearchResults(null)
-    } finally {
-      setSearching(false)
+    
+    // For Phase 2 SQL Injection simulation, only Customers search calls the vulnerable endpoint
+    if (active === 'Customers') {
+      setSearching(true)
+      try {
+        const token = session?.access_token
+        const endpoint = isMgr ? '/manager/customers' : '/employee/customers'
+        const data = await apiGet(`${endpoint}?search=${encodeURIComponent(val)}`, token)
+        const normalized = Array.isArray(data) ? data.map(r => [
+          r.users?.name || r.name || 'Unknown',
+          r.customer_id || r.email || r.id || '',
+          r.role || 'Northstar Secure',
+          r.users?.status || r.status || 'Active',
+          r.id
+        ]) : []
+        setSearchResults(normalized)
+      } catch {
+        setSearchResults(null)
+      } finally {
+        setSearching(false)
+      }
+    } else {
+      // Fast client-side filtering for Employees
+      const lower = val.toLowerCase()
+      setSearchResults(rows.filter(r => r.some(cell => String(cell).toLowerCase().includes(lower))))
     }
   }
 
   return (
     <>
+      {viewingId && (
+        <DetailsModal 
+          title={`${active === 'Employees' ? 'Employee' : 'Customer'} Details`}
+          token={session?.access_token} 
+          endpoint={isMgr ? `/manager/${active.toLowerCase()}/${viewingId}` : `/employee/${active.toLowerCase()}/${viewingId}`} 
+          onClose={() => setViewingId(null)} 
+        />
+      )}
       {showAdd && active === 'Customers' && !isMgr && (
         <NewCustomerForm
           action={action}
@@ -1465,7 +1582,7 @@ function Directory({ active, action, employeeData, session, refreshEmployee, isM
                       {index === 2 ? <span className={`status ${cell.toLowerCase()}`}>{cell}</span> : cell}
                     </td>
                   ))}
-                  <td><button className="more-button" onClick={() => action(`Opening ${row[0]}`)}>•••</button></td>
+                  <td><button className="more-button" onClick={() => setViewingId(row[4])}>•••</button></td>
                 </tr>
               ))}
               {displayRows.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'20px', color:'#9aa5b5'}}>No {active.toLowerCase()} found.</td></tr>}

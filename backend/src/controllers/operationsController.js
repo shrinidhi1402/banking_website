@@ -85,7 +85,8 @@ export async function employeeCustomers(req, res, next) {
       .order('created_at', { ascending: false })
 
     if (search) {
-      q = q.or(`users.name.ilike.%${search}%,users.email.ilike.%${search}%`)
+      // Correct way to filter on a joined table in Supabase
+      q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%`, { foreignTable: 'users' })
     }
 
     const { data, error } = await q
@@ -100,6 +101,15 @@ export const employeeCustomer       = (req, res, next) => {
     .then(data => res.json(data)).catch(next)
 }
 export const managerCustomer        = employeeCustomer
+export const managerEmployee        = (req, res, next) => {
+  return getOne('employee_profiles', (q) => q.select('*, users!inner(id, name, email, status, role)').eq('id', req.params.id))
+    .then(data => res.json(data)).catch(next)
+}
+export const managerTransaction     = (req, res, next) => {
+  return getOne('transactions', (q) => q.select('*, sender:accounts!sender_account_id(account_number, users(name)), receiver:accounts!receiver_account_id(account_number, users(name))').eq('id', req.params.id))
+    .then(data => res.json(data)).catch(next)
+}
+export const employeeTransaction    = managerTransaction
 export const employeeTransactions   = list('transactions', () => (q) => q.select('*, sender:accounts!sender_account_id(account_number, users(name)), receiver:accounts!receiver_account_id(account_number, users(name)))').order('created_at', { ascending: false }))
 export const employeeRequests       = list('requests', () => (q) => q.select('*, users!requests_user_id_fkey(id, name, email)').order('created_at', { ascending: false }))
 export const managerEmployees       = list('employee_profiles', () => (q) => q.select('*, users!inner(id, name, email, status, role)').order('created_at', { ascending: false }))

@@ -1,0 +1,7 @@
+{
+  "BUG_MFA": true,
+  "BUG_SQLI": false,
+  "BUG_IDOR": false,
+  "BUG_EXCESSIVE_PRIVILEGES": false,
+  "BUG_SECRET_EXPOSURE": false
+}

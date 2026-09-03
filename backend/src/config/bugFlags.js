@@ -14,7 +14,13 @@
  *  BUG_PAM_JUMP_SERVER          – Phase 7: Compromised Privileged Access / Jump Server
  */
 
-const flags = {
+import fs from 'fs'
+import path from 'path'
+
+const FLAGS_FILE = path.join(process.cwd(), 'flags.json')
+
+// Default flags
+let flags = {
   BUG_MFA:  false,
   BUG_SQLI: false,
   BUG_IDOR: false,
@@ -22,6 +28,24 @@ const flags = {
   BUG_SECRET_EXPOSURE: false,
   BUG_SUPPLY_CHAIN_COMPROMISE: false,
   BUG_PAM_JUMP_SERVER: false,
+}
+
+// Load flags from disk on startup if file exists
+try {
+  if (fs.existsSync(FLAGS_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(FLAGS_FILE, 'utf-8'))
+    flags = { ...flags, ...saved }
+  }
+} catch (e) {
+  console.error('[BugLab] Error loading flags from disk:', e.message)
+}
+
+function saveFlags() {
+  try {
+    fs.writeFileSync(FLAGS_FILE, JSON.stringify(flags, null, 2))
+  } catch (e) {
+    console.error('[BugLab] Error saving flags to disk:', e.message)
+  }
 }
 
 /**
@@ -39,23 +63,16 @@ export function isBugEnabled(flag) {
   return flags[flag] === true
 }
 
-/**
- * Toggles a specific bug flag on/off and returns the new state.
- * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'|'BUG_EXCESSIVE_PRIVILEGES'} flag
- */
 export function toggleBugFlag(flag) {
   if (!(flag in flags)) throw new Error(`Unknown bug flag: ${flag}`)
   flags[flag] = !flags[flag]
+  saveFlags()
   return flags[flag]
 }
 
-/**
- * Explicitly sets a bug flag.
- * @param {'BUG_MFA'|'BUG_SQLI'|'BUG_IDOR'|'BUG_EXCESSIVE_PRIVILEGES'} flag
- * @param {boolean} value
- */
 export function setBugFlag(flag, value) {
   if (!(flag in flags)) throw new Error(`Unknown bug flag: ${flag}`)
   flags[flag] = Boolean(value)
+  saveFlags()
   return flags[flag]
 }
