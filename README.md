@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/netra-logo.jpg" alt="NETRA – AI-Powered Risk Intelligence" width="520" />
+  <img src="docs/netra-logo.png" alt="NETRA – AI-Powered Risk Intelligence" width="520" />
 </p>
 
 <h1 align="center">The NETRA Platform</h1>
@@ -242,10 +242,7 @@ Special thanks to the open-source community for the powerful libraries and frame
 
 **Team NETRA**
 
-This project was developed by a dedicated team of engineers, security researchers, and data scientists committed to bridging the gap between cybersecurity operations and executive risk communication.
+This project was developed by a team  0xAxiom.
 
 ---
 
-<p align="center">
-  <sub>Built with ❤️ by the <strong>NETRA</strong> team — turning cyber events into actionable risk intelligence.</sub>
-</p>
